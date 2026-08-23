@@ -4,6 +4,7 @@ import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 import 'package:peixi/features/calibration/calibration_page.dart';
+import 'package:peixi/features/player/player_page.dart';
 import 'package:peixi/features/processing/processing_page.dart';
 import 'package:peixi/features/settings/settings_page.dart';
 import 'package:peixi/providers.dart';
@@ -187,10 +188,14 @@ class _ProjectCard extends ConsumerWidget {
           context, MaterialPageRoute(builder: (_) => page));
       return;
     }
-    if (context.mounted) {
+    if (!context.mounted) return;
+    if (status == ProjectStatus.ready) {
       await Navigator.push(context,
-          MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
+          MaterialPageRoute(builder: (_) => PlayerPage(projectId: project.id)));
+      return;
     }
+    await Navigator.push(context,
+        MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
   }
 
   void _confirmDelete(BuildContext context, WidgetRef ref) {
