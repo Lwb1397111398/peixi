@@ -1,4 +1,4 @@
-import 'package:drift/drift.dart' show Value;
+
 import 'package:peixi/core/database/app_database.dart';
 
 /// 场景切分结果（idx 连续；firstSeg/lastSeg 指向 segments.idx 区间）。

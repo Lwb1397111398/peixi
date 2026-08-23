@@ -9,7 +9,10 @@ import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
 import 'package:peixi/providers.dart';
+import 'package:peixi/features/pipeline/character_mapper.dart';
+import 'package:peixi/features/pipeline/commentary_generator.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
+import 'package:peixi/features/pipeline/scene_segmenter.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -56,6 +59,24 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       asr: AsrClient(ref.read(dioProvider)),
       settings: ref.read(settingsRepoProvider),
       audioDir: await audioDir(),
+    );
+    // S6/S8/S9 协作器装配（偏离：引擎不直接依赖 LLM，保持可测）
+    final llm = ref.read(llmServiceProvider);
+    final db = ref.read(databaseProvider);
+    final fallback = await ref.read(settingsRepoProvider).loadApiConfig();
+    e.attachCollaborators(
+      map: (id) => CharacterMapper(db: db, llm: llm).map(id),
+      segment: (id) => SceneWriter(db).writeScenes(id),
+      commentary: (id) => CommentaryGenerator(
+        db: db,
+        llm: llm,
+        apiConfig: () => llm.config ?? fallback,
+        onProgress: (done, total) => _onEvent(PipelineEvent(
+            projectId: id,
+            stage: 'commentary',
+            status: ProjectStatus.segmented,
+            progress: total == 0 ? 0 : done / total)),
+      ).generate(id),
     );
     e.events.listen(_onEvent);
     _engine = e;

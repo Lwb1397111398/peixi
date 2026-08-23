@@ -36,6 +36,9 @@ class LlmService {
 
   void updateConfig(ApiConfig config) => _config = config;
 
+  /// 当前配置（协作器读取模型名等；未配置时为 null）
+  ApiConfig? get config => _config;
+
   /// 通用系统前缀。同时含中英文 json/JSON 字样：
   /// 百炼 json_object 模式要求 messages 中必须出现 "json"（spec 3.2）。
   static const jsonSystemPrefix =
