@@ -1,0 +1,56 @@
+/// LLM 分层（设计稿第六节）：cheap→摘要/映射/人物提取；standard→解说/批注/知识卡
+enum LlmTier { cheap, standard }
+
+class ApiConfig {
+  const ApiConfig({
+    required this.baseUrl,
+    required this.apiKey,
+    this.modelCheap = 'qwen-flash',
+    this.modelStandard = 'qwen-plus',
+  });
+
+  static const bailianBaseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+  final String baseUrl;
+  final String apiKey;
+  final String modelCheap;
+  final String modelStandard;
+
+  String modelOf(LlmTier tier) =>
+      tier == LlmTier.cheap ? modelCheap : modelStandard;
+  bool get isComplete => baseUrl.isNotEmpty && apiKey.isNotEmpty;
+}
+
+class OssConfig {
+  const OssConfig({
+    required this.bucket,
+    required this.endpoint,
+    required this.accessKeyId,
+    required this.accessKeySecret,
+  });
+  final String bucket;
+  final String endpoint; // 形如 oss-cn-beijing.aliyuncs.com
+  final String accessKeyId;
+  final String accessKeySecret;
+  bool get isComplete =>
+      bucket.isNotEmpty &&
+      endpoint.isNotEmpty &&
+      accessKeyId.isNotEmpty &&
+      accessKeySecret.isNotEmpty;
+}
+
+/// 弹幕提问偏好（设计稿 8.2/8.6 默认值）
+class PlayPrefs {
+  const PlayPrefs({
+    this.quizEnabled = true,
+    this.maxPerEpisode = 5,
+    this.minGapMinutes = 4,
+    this.triggerRatio = 0.3,
+    this.keepTempAudio = true,
+  });
+  final bool quizEnabled;
+  final int maxPerEpisode;
+  final int minGapMinutes;
+  final double triggerRatio;
+  final bool keepTempAudio;
+}
