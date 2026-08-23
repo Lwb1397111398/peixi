@@ -1,36 +1,242 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/features/pipeline/pipeline_controller.dart';
+import 'package:peixi/features/pipeline/project_status.dart';
+import 'package:peixi/features/processing/processing_page.dart';
 import 'package:peixi/features/settings/settings_page.dart';
+import 'package:peixi/providers.dart';
 
-/// M1-P1：仅空态与设置入口。项目卡片网格在阶段二接入真实数据。
-class LibraryPage extends StatelessWidget {
+/// 媒体库（设计稿 8.1）：项目卡片网格 + 状态徽章 + 处理进度。
+class LibraryPage extends ConsumerWidget {
   const LibraryPage({super.key});
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          title: const Text('陪析 · 媒体库'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: '设置',
-              onPressed: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage())),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final db = ref.watch(databaseProvider);
+    final projects = db.select(db.projects).watch();
+    final pipeline = ref.watch(pipelineControllerProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('陪析 · 媒体库'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '设置',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const SettingsPage())),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        icon: const Icon(Icons.video_file_outlined),
+        label: const Text('导入视频'),
+        onPressed: () async {
+          final res = await ref
+              .read(pipelineControllerProvider.notifier)
+              .importVideo();
+          if (!context.mounted) return;
+          if (res.error != null) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(res.error!)));
+          }
+        },
+      ),
+      body: StreamBuilder<List<Project>>(
+        stream: projects,
+        builder: (context, snap) {
+          final list = snap.data ?? const [];
+          if (list.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.movie_filter_outlined,
+                      size: 72, color: Colors.grey.shade600),
+                  const SizedBox(height: 12),
+                  Text('还没有项目',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  const Text('点右下角导入一集视频试试'),
+                ],
+              ),
+            );
+          }
+          return GridView.builder(
+            padding: const EdgeInsets.all(12),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 320,
+              childAspectRatio: 1.6,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
             ),
-          ],
-        ),
-        body: Center(
+            itemCount: list.length,
+            itemBuilder: (context, i) =>
+                _ProjectCard(project: list[i], state: pipeline[list[i].id]),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ProjectCard extends ConsumerWidget {
+  const _ProjectCard({required this.project, this.state});
+  final Project project;
+  final PipelineState? state;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ProjectStatus.fromDb(project.status);
+    final (badge, color) = statusBadge(status, project, state);
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _open(context),
+        onLongPress: () => _confirmDelete(context, ref),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.movie_filter_outlined,
-                  size: 72, color: Colors.grey.shade600),
-              const SizedBox(height: 12),
-              Text('还没有项目', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 4),
-              Text('视频导入与处理流水线将在阶段二上线',
-                  style: Theme.of(context).textTheme.bodySmall),
+              Row(children: [
+                Icon(
+                    project.type == 'video'
+                        ? Icons.movie_outlined
+                        : Icons.menu_book_outlined,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    project.title +
+                        (_episodeSuffix() ?? ''),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ]),
+              const Spacer(),
+              Text(status == ProjectStatus.failed
+                  ? '失败：${stageLabelOf(project.failedStage)}'
+                  : statusLabel(status),
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Colors.grey.shade400)),
+              const SizedBox(height: 6),
+              if (state?.busy == true && state?.progress != null)
+                LinearProgressIndicator(
+                    value: state!.progress,
+                    minHeight: 6,
+                    borderRadius: BorderRadius.circular(3))
+              else if (state?.busy == true)
+                const LinearProgressIndicator(minHeight: 6)
+              else
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(badge,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: color,
+                          fontWeight: FontWeight.w600)),
+                ),
+              if (status == ProjectStatus.failed)
+                TextButton.icon(
+                  onPressed: () => ref
+                      .read(pipelineControllerProvider.notifier)
+                      .retry(project.id),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('重试该阶段'),
+                ),
             ],
           ),
         ),
-      );
+      ),
+    );
+  }
+
+  String? _episodeSuffix() {
+    final m = project.metaJson;
+    if (m == null) return null;
+    final ep = RegExp(r'"episode":(\d+)').firstMatch(m)?.group(1);
+    return ep == null ? null : ' · 第$ep集';
+  }
+
+  void _open(BuildContext context) {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
+  }
+
+  void _confirmDelete(BuildContext context, WidgetRef ref) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('删除「${project.title}」？'),
+        content: const Text('解说、卡片、问答记录将一并删除，且不可恢复。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await ref
+                  .read(pipelineControllerProvider.notifier)
+                  .deleteProject(project.id);
+            },
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+  }
 }
+
+/// 状态徽章文案与配色。
+(String, Color) statusBadge(
+    ProjectStatus status, Project project, PipelineState? state) {
+  switch (status) {
+    case ProjectStatus.ready:
+      return ('可观看', Colors.green);
+    case ProjectStatus.waitCalibration:
+      return ('待校准', Colors.orange);
+    case ProjectStatus.failed:
+      return ('处理失败', Colors.red);
+    default:
+      return ('处理中', Colors.blue);
+  }
+}
+
+String statusLabel(ProjectStatus status) => switch (status) {
+      ProjectStatus.imported => '已导入 · 准备处理',
+      ProjectStatus.audioReady => '音频已就绪',
+      ProjectStatus.uploaded => '已上传 · 识别排队中',
+      ProjectStatus.asrDone => '转录完成 · 角色映射中',
+      ProjectStatus.mapped => '映射完成',
+      ProjectStatus.calibrated => '校准完成 · 切分场景中',
+      ProjectStatus.segmented => '场景已切分 · 生成解说中',
+      ProjectStatus.commentaryDone => '解说完成 · 收尾中',
+      _ => '',
+    };
+
+String stageLabelOf(String? failedStage) =>
+    failedStage == null ? '未知阶段' : switch (failedStage) {
+        'subtitle' => '字幕提取',
+        'audio' => '音频抽取',
+        'upload' => '上传中转',
+        'asr' => '语音识别',
+        'map' => '角色映射',
+        'segment' => '场景切分',
+        'commentary' => '解说生成',
+        'finalize' => '收尾',
+        _ => failedStage,
+      };

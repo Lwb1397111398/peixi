@@ -1,7 +1,12 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
+import 'package:peixi/features/pipeline/pipeline_controller.dart';
+
+/// 共享 Dio（ASR 等客户端复用）
+final dioProvider = Provider<Dio>((ref) => Dio());
 
 /// main() 里完成异步初始化后 overrideWithValue 注入
 final databaseProvider =
@@ -18,3 +23,7 @@ final llmServiceProvider = Provider<LlmService>((ref) {
   });
   return svc;
 });
+
+/// 管线后台控制器：进度状态按 projectId 广播
+final pipelineControllerProvider = NotifierProvider<PipelineController,
+    Map<int, PipelineState>>(PipelineController.new);
