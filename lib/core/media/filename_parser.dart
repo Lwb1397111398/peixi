@@ -15,7 +15,7 @@ class FilenameParser {
       return (title: _cleanTitle(base.substring(0, m.start)), episode: int.parse(m.group(2)!));
     }
     // 2) 第X集/话/回（中文数字或阿拉伯）
-    m = RegExp(r'第([0-9一二两三四五六七八九十廿卅卌]+)[集话話回]').firstMatch(base);
+    m = RegExp(r'第([0-9零一二两三四五六七八九十廿卅卌]+)[集话話回]').firstMatch(base);
     if (m != null) {
       final ep = int.tryParse(m.group(1)!) ?? _parseCjkNumber(m.group(1)!);
       if (ep != null) {
