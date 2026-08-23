@@ -6,7 +6,8 @@ plugins {
 
 android {
     namespace = "com.jingyue.peixi"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_secure_storage 11 需要 SDK 37；本机已安装 platforms;android-37.0
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
