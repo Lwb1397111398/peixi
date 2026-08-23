@@ -21,16 +21,17 @@ class QuizScene {
 }
 
 /// 二分查找：pos 所在场景下标（scenes 按 startMs 升序）。
+/// 场景间的静默期归前景（解说卡在新场景开始时才切换）；
 /// pos 早于首场景返回 0，晚于末场景返回 length-1，空表返回 -1。
 int sceneAt(List<QuizScene> scenes, int posMs) {
   if (scenes.isEmpty) return -1;
   var lo = 0, hi = scenes.length - 1;
   while (lo < hi) {
-    final mid = (lo + hi) >> 1;
-    if (posMs < scenes[mid].endMs) {
-      hi = mid;
+    final mid = (lo + hi + 1) >> 1;
+    if (scenes[mid].startMs <= posMs) {
+      lo = mid;
     } else {
-      lo = mid + 1;
+      hi = mid - 1;
     }
   }
   return lo;
