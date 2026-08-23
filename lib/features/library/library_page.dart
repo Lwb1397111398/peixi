@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
+import 'package:peixi/features/calibration/calibration_page.dart';
 import 'package:peixi/features/processing/processing_page.dart';
 import 'package:peixi/features/settings/settings_page.dart';
 import 'package:peixi/providers.dart';
@@ -94,7 +95,7 @@ class _ProjectCard extends ConsumerWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => _open(context),
+        onTap: () => _open(context, ref),
         onLongPress: () => _confirmDelete(context, ref),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -171,9 +172,25 @@ class _ProjectCard extends ConsumerWidget {
     return ep == null ? null : ' · 第$ep集';
   }
 
-  void _open(BuildContext context) {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
+  Future<void> _open(BuildContext context, WidgetRef ref) async {
+    final status = ProjectStatus.fromDb(project.status);
+    if (status == ProjectStatus.waitCalibration) {
+      final page = await buildCalibrationPage(
+        projectId: project.id,
+        ref: ref,
+        onConfirm: (names) => ref
+            .read(pipelineControllerProvider.notifier)
+            .confirmCalibration(project.id, names),
+      );
+      if (!context.mounted) return;
+      await Navigator.push(
+          context, MaterialPageRoute(builder: (_) => page));
+      return;
+    }
+    if (context.mounted) {
+      await Navigator.push(context,
+          MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
+    }
   }
 
   void _confirmDelete(BuildContext context, WidgetRef ref) {
