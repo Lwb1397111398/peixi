@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 云端 ASR/LLM/OSS 均需网络（Flutter 模板仅在 debug/profile 放行 INTERNET） -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 处理期间保持唤醒（wakelock_plus 运行时申请，显式声明兜底） -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <application
         android:label="陪析"
         android:name="${applicationName}"

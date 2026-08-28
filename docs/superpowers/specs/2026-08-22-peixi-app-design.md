@@ -115,3 +115,14 @@
 ## 6. 验收标准
 
 照设计稿第十节 M1/M2/M3 原文执行，不再重复。
+
+## 5. M1 完整实现新增偏离（2026-08-23，详见 交付说明-M1完整版.md）
+
+10. OSS 客户端自实现 V1 签名（替代 dart_aliyun_oss），单次 PUT 替代分片。
+11. 校准试听复用 media_kit AudioPlayer（不引入 just_audio）。
+12. 抽音频编码器运行时探测（libmp3lame→aac→pcm），规避 ffmpeg-kit 变体差异。
+13. Android 导入复制视频进应用目录（SAF 路径不可长期依赖）。
+14. S2 字幕仅提取解析入库（交叉校对/角色名提升延至调优期）。
+15. L4 最小间隔按播放位置差而非墙钟。
+16. 构建期 GitHub 依赖（ffmpeg-kit zip / libmpv win+android / ANGLE）全部以
+    镜像预取脚本固化：tool/fetch-windows-native-deps.sh、tool/fetch-android-native-deps.sh。
