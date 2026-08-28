@@ -1,0 +1,122 @@
+import 'dart:convert';
+
+import 'package:gbk_codec/gbk_codec.dart';
+
+/// N1 小说解析：编码检测 + 段落切分 + 章节切分。
+class NovelChapter {
+  const NovelChapter({required this.idx, this.title, required this.paragraphs});
+  final int idx;
+  final String? title;
+  final List<String> paragraphs;
+}
+
+class NovelDoc {
+  const NovelDoc({required this.chapters});
+  final List<NovelChapter> chapters;
+  int get paragraphCount =>
+      chapters.fold(0, (n, c) => n + c.paragraphs.length);
+  int get charCount => chapters.fold(
+      0,
+      (n, c) =>
+          n + c.paragraphs.fold(0, (m, p) => m + p.length));
+}
+
+/// 编码检测：UTF-8 严格解码，失败则按 GBK（GB18030 兼容大部分常用字）兜底。
+/// gbk_codec 的解码永不抛异常，无法再做更细的探测。
+String decodeNovelText(List<int> bytes) {
+  try {
+    return utf8.decode(bytes); // 严格模式，非法字节抛 FormatException
+  } on FormatException {
+    return gbk.decoder.convert(bytes);
+  }
+}
+
+// 章标题：第X章/回/卷/节，或 楔子/序章/引子/尾声/终章/番外 等惯用标题。
+final _chapterHeadingRe = RegExp(
+    r'^(第[〇零一二三四五六七八九十百千两0-9]{1,7}[章回卷节]|楔子|序章|引子|尾声|终章|番外)([\s：:．.·—-].*)?$');
+
+/// 章标题行不应是正文段落，限长防止误伤叙事句。
+const _maxHeadingLength = 40;
+
+/// 无章标题时的兜底分块目标大小。
+const _fallbackChunkChars = 2000;
+
+NovelDoc parseNovel(String raw) {
+  final text = raw
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .replaceFirst('\uFEFF', '');
+  final lines = text.split('\n');
+
+  final paragraphs = <String>[];
+  final isHeading = <bool>[];
+  for (final line in lines) {
+    final t = line.trim().replaceAll('\u3000', ' ').trim();
+    if (t.isEmpty) continue;
+    paragraphs.add(t);
+    isHeading.add(_chapterHeadingRe.hasMatch(t) && t.length <= _maxHeadingLength);
+  }
+
+  final headingIdx = <int>[
+    for (var i = 0; i < paragraphs.length; i++)
+      if (isHeading[i]) i
+  ];
+
+  // 锚定正则 + 标题限长已足够防误切，单个标题也按章切（保留标题信息）
+  if (headingIdx.isNotEmpty) {
+    return NovelDoc(chapters: _splitByHeadings(paragraphs, headingIdx));
+  }
+  return NovelDoc(chapters: _chunkBySize(paragraphs));
+}
+
+List<NovelChapter> _splitByHeadings(
+    List<String> paragraphs, List<int> headingIdx) {
+  final chapters = <NovelChapter>[];
+  // 首个章标题之前的引言单独成章（可能为空则跳过）
+  final first = headingIdx.first;
+  if (first > 0) {
+    chapters.add(NovelChapter(
+        idx: 0, title: null, paragraphs: paragraphs.sublist(0, first)));
+  }
+  for (var h = 0; h < headingIdx.length; h++) {
+    final start = headingIdx[h];
+    final end = h + 1 < headingIdx.length ? headingIdx[h + 1] : paragraphs.length;
+    final body = paragraphs.sublist(start + 1, end);
+    chapters.add(NovelChapter(
+        idx: chapters.length,
+        title: paragraphs[start],
+        paragraphs: body));
+  }
+  return chapters;
+}
+
+List<NovelChapter> _chunkBySize(List<String> paragraphs) {
+  if (paragraphs.isEmpty) return const [];
+  final chapters = <NovelChapter>[];
+  var buf = <String>[];
+  var bufChars = 0;
+  for (final para in paragraphs) {
+    buf.add(para);
+    bufChars += para.length;
+    if (bufChars >= _fallbackChunkChars) {
+      chapters.add(NovelChapter(
+          idx: chapters.length, title: null, paragraphs: buf));
+      buf = <String>[];
+      bufChars = 0;
+    }
+  }
+  if (buf.isNotEmpty) {
+    if (bufChars < _fallbackChunkChars ~/ 5 && chapters.isNotEmpty) {
+      // 尾块太小并入上一章
+      final last = chapters.last;
+      chapters[chapters.length - 1] = NovelChapter(
+          idx: last.idx,
+          title: last.title,
+          paragraphs: [...last.paragraphs, ...buf]);
+    } else {
+      chapters.add(NovelChapter(
+          idx: chapters.length, title: null, paragraphs: buf));
+    }
+  }
+  return chapters;
+}
