@@ -9,6 +9,7 @@ import 'package:peixi/core/asr/asr_client.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/oss/oss_client.dart';
+import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
@@ -50,12 +51,14 @@ class PipelineEngine {
     Dio? ossDio,
     this.pollInterval = const Duration(seconds: 5),
     this.pollTimeout = const Duration(minutes: 30),
+    Future<NormalizedAsr> Function(String audioPath)? localAsr,
   })  : _db = db,
         _ffmpeg = ffmpeg,
         _asr = asr,
         _settings = settings,
         _audioDir = audioDir,
-        _ossDio = ossDio ?? Dio() {
+        _ossDio = ossDio ?? Dio(),
+        _localAsr = localAsr {
     _audioDir.createSync(recursive: true);
   }
 
@@ -67,6 +70,9 @@ class PipelineEngine {
   final Dio _ossDio;
   final Duration pollInterval;
   final Duration pollTimeout;
+
+  /// 本地 ASR（AsrMode.local 时调用；null = 本地模式未初始化）
+  final Future<NormalizedAsr> Function(String audioPath)? _localAsr;
 
   final StreamController<PipelineEvent> _events =
       StreamController<PipelineEvent>.broadcast();
@@ -119,13 +125,22 @@ class PipelineEngine {
         if (!await _stage(projectId, 'audio', _extractAudio)) return;
         st = ProjectStatus.audioReady;
       }
-      if (st == ProjectStatus.audioReady) {
-        if (!await _stage(projectId, 'upload', _uploadOss)) return;
-        st = ProjectStatus.uploaded;
-      }
-      if (st == ProjectStatus.uploaded) {
-        if (!await _stage(projectId, 'asr', _runAsrTask)) return;
-        st = ProjectStatus.asrDone;
+      final asrMode = await _settings.loadAsrMode();
+      if (asrMode == AsrMode.local) {
+        // 本地识别：无需 OSS 中转与任务轮询
+        if (st == ProjectStatus.audioReady) {
+          if (!await _stage(projectId, 'asr', _runAsrTask)) return;
+          st = ProjectStatus.asrDone;
+        }
+      } else {
+        if (st == ProjectStatus.audioReady) {
+          if (!await _stage(projectId, 'upload', _uploadOss)) return;
+          st = ProjectStatus.uploaded;
+        }
+        if (st == ProjectStatus.uploaded) {
+          if (!await _stage(projectId, 'asr', _runAsrTask)) return;
+          st = ProjectStatus.asrDone;
+        }
       }
       if (st == ProjectStatus.asrDone) {
         if (!await _stage(projectId, 'map', _mapCharacters)) return;
@@ -209,7 +224,11 @@ class PipelineEngine {
     final p = await _project(id);
     final meta = ProjectMeta.fromJson(p.metaJson);
     if (meta.audioFormat == null) {
-      meta.audioFormat = (await _ffmpeg.pickAudioFormat()).ext;
+      // 本地识别需要 16k wav（extractAudio 统一 -ac 1 -ar 16000）
+      final mode = await _settings.loadAsrMode();
+      meta.audioFormat = mode == AsrMode.local
+          ? 'wav'
+          : (await _ffmpeg.pickAudioFormat()).ext;
       await _saveMeta(id, meta);
     }
     final out = meta.audioPath(_audioDir.path, id);
@@ -250,55 +269,90 @@ class PipelineEngine {
     await _setStatus(id, ProjectStatus.uploaded);
   }
 
-  // ---------- S5 ASR：提交 + 轮询 + 下载 + 删对象 ----------
+  // ---------- S5 ASR：cloud=提交+轮询+下载+删对象；local=直接识别 ----------
   Future<void> _runAsrTask(int id) async {
     var p = await _project(id);
     var meta = ProjectMeta.fromJson(p.metaJson);
-    final apiCfg = await _settings.loadApiConfig();
-    if (!apiCfg.isComplete) {
-      throw PipelineException('未配置 LLM/ASR API Key（设置页）');
-    }
-    final ossCfg = await _settings.loadOssConfig();
-    if (ossCfg == null || !ossCfg.isComplete) {
-      throw PipelineException('未配置 OSS 中转桶');
-    }
-    final oss = OssClient(_ossDio, ossCfg);
+    final mode = await _settings.loadAsrMode();
 
-    if (meta.asrTaskId == null) {
-      if (meta.ossKey == null) {
-        throw PipelineException('缺少 OSS 对象键，请重试');
+    final NormalizedAsr norm;
+    if (mode == AsrMode.local) {
+      final localFn = _localAsr;
+      if (localFn == null) {
+        throw PipelineException('本地 ASR 未初始化（需下载模型）');
       }
-      final url = oss.signedGetUrl(meta.ossKey!);
-      meta.asrTaskId = await _asr.submit(apiCfg.apiKey, url);
-      // 立即落盘：之后任意时刻被杀都能凭 task_id 续轮询
-      meta = await _saveMeta(id, meta);
-      p = await _project(id);
+      norm = await localFn(await _ensureWavAudio(p, id, meta));
+    } else {
+      final apiCfg = await _settings.loadApiConfig();
+      if (!apiCfg.isComplete) {
+        throw PipelineException('未配置 LLM/ASR API Key（设置页）');
+      }
+      final ossCfg = await _settings.loadOssConfig();
+      if (ossCfg == null || !ossCfg.isComplete) {
+        throw PipelineException('未配置 OSS 中转桶');
+      }
+      final oss = OssClient(_ossDio, ossCfg);
+
+      if (meta.asrTaskId == null) {
+        if (meta.ossKey == null) {
+          throw PipelineException('缺少 OSS 对象键，请重试');
+        }
+        final url = oss.signedGetUrl(meta.ossKey!);
+        meta.asrTaskId = await _asr.submit(apiCfg.apiKey, url);
+        // 立即落盘：之后任意时刻被杀都能凭 task_id 续轮询
+        meta = await _saveMeta(id, meta);
+        p = await _project(id);
+      }
+
+      final deadline = DateTime.now().add(pollTimeout);
+      String? transcriptionUrl;
+      while (true) {
+        final r = await _asr.poll(apiCfg.apiKey, meta.asrTaskId!);
+        if (r.phase == AsrTaskPhase.succeeded) {
+          transcriptionUrl = r.transcriptionUrl;
+          break;
+        }
+        if (r.phase == AsrTaskPhase.failed) {
+          throw PipelineException('ASR 任务失败: ${r.message ?? '未知原因'}');
+        }
+        if (DateTime.now().isAfter(deadline)) {
+          throw PipelineException('ASR 轮询超时（${pollTimeout.inMinutes} 分钟）');
+        }
+        await Future<void>.delayed(pollInterval);
+      }
+
+      norm = await _asr.downloadResult(transcriptionUrl!);
+      // 识别完成即删 OSS 对象（设计稿：用后即删；失败不影响主线）
+      try {
+        if (meta.ossKey != null) await oss.deleteObject(meta.ossKey!);
+      } catch (_) {}
     }
 
-    final deadline = DateTime.now().add(pollTimeout);
-    String? transcriptionUrl;
-    while (true) {
-      final r = await _asr.poll(apiCfg.apiKey, meta.asrTaskId!);
-      if (r.phase == AsrTaskPhase.succeeded) {
-        transcriptionUrl = r.transcriptionUrl;
-        break;
-      }
-      if (r.phase == AsrTaskPhase.failed) {
-        throw PipelineException('ASR 任务失败: ${r.message ?? '未知原因'}');
-      }
-      if (DateTime.now().isAfter(deadline)) {
-        throw PipelineException('ASR 轮询超时（${pollTimeout.inMinutes} 分钟）');
-      }
-      await Future<void>.delayed(pollInterval);
+    await _persistAsrResult(id, meta, norm);
+    await _setStatus(id, ProjectStatus.asrDone);
+  }
+
+  /// 本地模式音频：缓存是 wav 直接用；否则从源视频补转一份 16k wav。
+  Future<String> _ensureWavAudio(Project p, int id, ProjectMeta meta) async {
+    if (meta.audioFormat == 'wav') {
+      final f = File(meta.audioPath(_audioDir.path, id));
+      if (f.existsSync()) return f.path;
     }
+    final wavPath = '${_audioDir.path}/$id.wav';
+    if (!File(wavPath).existsSync()) {
+      if (!File(p.sourcePath).existsSync()) {
+        throw PipelineException('源视频不存在且缓存音频不是 WAV，无法本地识别');
+      }
+      await _ffmpeg.extractAudio(p.sourcePath, wavPath, onProgress: (r) {
+        _emit(id, 'audio', ProjectStatus.audioReady, progress: r);
+      });
+    }
+    return wavPath;
+  }
 
-    final norm = await _asr.downloadResult(transcriptionUrl!);
-    // 识别完成即删 OSS 对象（设计稿：用后即删；失败不影响主线）
-    try {
-      if (meta.ossKey != null) await oss.deleteObject(meta.ossKey!);
-    } catch (_) {}
-
-    // 规范化结果 → meta_json；对白行 → segments（幂等：先清旧）
+  /// 规范化结果 → meta_json；对白行 → segments（幂等：先清旧）。
+  Future<void> _persistAsrResult(
+      int id, ProjectMeta meta, NormalizedAsr norm) async {
     meta.asrNormalized = {
       'duration_ms': norm.durationMs,
       'sentences': [
@@ -327,7 +381,6 @@ class PipelineEngine {
       }
     });
     await _saveMeta(id, meta);
-    await _setStatus(id, ProjectStatus.asrDone);
   }
 
   // ---------- S6 角色映射（实现由 attachCollaborators 注入，Phase 3） ----------

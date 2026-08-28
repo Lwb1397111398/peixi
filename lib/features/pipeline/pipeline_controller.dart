@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
@@ -64,6 +65,10 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       asr: AsrClient(ref.read(dioProvider)),
       settings: ref.read(settingsRepoProvider),
       audioDir: await audioDir(),
+      localAsr: (audioPath) async {
+        final modelDir = await LocalAsrClient.defaultLocalModelDir();
+        return LocalAsrClient(modelDir: modelDir).recognize(audioPath);
+      },
     );
     // S6/S8/S9 协作器装配（偏离：引擎不直接依赖 LLM，保持可测）
     final llm = ref.read(llmServiceProvider);

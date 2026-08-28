@@ -1,6 +1,10 @@
 /// LLM 分层（设计稿第六节）：cheap→摘要/映射/人物提取；standard→解说/批注/知识卡
 enum LlmTier { cheap, standard }
 
+/// 语音识别模式（M2 双模式）：cloud=DashScope 录音文件识别（需 OSS 中转），
+/// local=sherpa-onnx 离线识别（无说话人分离、无需 OSS）。
+enum AsrMode { cloud, local }
+
 class ApiConfig {
   const ApiConfig({
     required this.baseUrl,

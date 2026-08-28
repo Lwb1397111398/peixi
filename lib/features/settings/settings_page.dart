@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/providers.dart';
 
@@ -26,6 +27,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   int _totalTokens = 0;
   bool _testing = false;
   bool _loaded = false;
+  AsrMode _asrMode = AsrMode.cloud;
+  String? _localModelDir;
+  bool _localModelReady = false;
 
   @override
   void initState() {
@@ -57,7 +61,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 )
                 .getSingle())
             .read<int>('t');
+    _asrMode = await repo.loadAsrMode();
+    await _refreshLocalModel();
     if (mounted) setState(() => _loaded = true);
+  }
+
+  Future<void> _refreshLocalModel() async {
+    final dir = await LocalAsrClient.defaultLocalModelDir();
+    _localModelDir = dir;
+    _localModelReady = LocalAsrClient(modelDir: dir).isReady;
   }
 
   @override
@@ -164,6 +176,60 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 obscureText: true,
                 decoration: const InputDecoration(labelText: 'AccessKeySecret'),
               ),
+              const Divider(height: 32),
+              Text('语音识别（ASR）', style: Theme.of(context).textTheme.titleMedium),
+              DropdownButtonFormField<AsrMode>(
+                initialValue: _asrMode,
+                decoration: const InputDecoration(labelText: '识别模式'),
+                items: const [
+                  DropdownMenuItem(
+                      value: AsrMode.cloud,
+                      child: Text('云端 · DashScope（需 OSS 中转，有说话人分离）')),
+                  DropdownMenuItem(
+                      value: AsrMode.local,
+                      child: Text('本地 · sherpa-onnx（离线，无说话人分离）')),
+                ],
+                onChanged: (v) async {
+                  if (v == null) return;
+                  setState(() => _asrMode = v);
+                  await ref.read(settingsRepoProvider).saveAsrMode(v);
+                },
+              ),
+              Row(children: [
+                Icon(
+                    _localModelReady
+                        ? Icons.check_circle
+                        : Icons.error_outline,
+                    size: 18,
+                    color: _localModelReady ? Colors.green : Colors.orange),
+                const SizedBox(width: 8),
+                Text(_localModelReady ? '本地模型已就绪' : '本地模型未下载'),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () async {
+                    await _refreshLocalModel();
+                    if (mounted) setState(() {});
+                  },
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('刷新状态'),
+                ),
+              ]),
+              if (_localModelDir != null)
+                Text('模型目录：$_localModelDir',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey.shade500)),
+              if (!_localModelReady)
+                Text(
+                  '未下载时请运行 tool/download-sherpa-model.sh，'
+                  '并把 models/asr 目录放到上面的模型目录（或 Windows exe 同级目录）。'
+                  '本地模式无说话人分离，角色映射将全部归为一个说话人。',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Colors.orange.shade300),
+                ),
               const Divider(height: 32),
               Row(
                 children: [

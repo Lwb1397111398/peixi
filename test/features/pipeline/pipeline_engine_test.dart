@@ -229,4 +229,46 @@ void main() {
     await sub.cancel();
     expect(events.last.detail, contains('OSS'));
   });
+
+  test('本地 ASR 模式：跳过 OSS 直接识别，segments/normalized 落库', () async {
+    await settings.saveAsrMode(AsrMode.local);
+    final id = await createProject();
+    final localPaths = <String>[];
+    final engine = PipelineEngine(
+        db: db,
+        ffmpeg: FakeFFmpegService(durationMs: 2700000),
+        asr: AsrClient(Dio()),
+        settings: settings,
+        audioDir: audioDir,
+        pollInterval: const Duration(milliseconds: 10),
+        localAsr: (audioPath) async {
+          localPaths.add(audioPath);
+          return const NormalizedAsr(durationMs: 1500, sentences: [
+            AsrSentence(
+                beginMs: 0,
+                endMs: 1500,
+                text: '本地识别文本',
+                speakerId: 'SPEAKER_00'),
+          ]);
+        });
+    final stages = <String>[];
+    engine.events.listen((e) => stages.add(e.stage));
+    await engine.run(id);
+
+    // 无 OSS 配置也能走到闸门 = upload 阶段被跳过
+    final p = await reload(id);
+    expect(p.status, ProjectStatus.waitCalibration.db);
+    expect(stages, isNot(contains('upload')));
+    // 本地识别拿到的是 wav 路径
+    expect(localPaths, hasLength(1));
+    expect(localPaths.single.endsWith('.wav'), isTrue);
+    // meta 强制 wav、无 asr_task_id（不走云端任务）
+    final meta = ProjectMeta.fromJson(p.metaJson);
+    expect(meta.audioFormat, 'wav');
+    expect(meta.asrTaskId, isNull);
+    expect(meta.asrNormalized!['sentences'], hasLength(1));
+    final segs = await db.select(db.segments).get();
+    expect(segs.single.content, '本地识别文本');
+    expect(segs.single.speakerCharId, isNull); // 映射阶段尚未执行
+  });
 }

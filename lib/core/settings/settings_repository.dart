@@ -28,6 +28,8 @@ class SettingsRepository {
   static const _kReaderFontSize = 'reader.font_size';
   static const _kReaderLineHeight = 'reader.line_height';
   static const _kReaderTheme = 'reader.theme';
+  // ASR 模式键
+  static const _kAsrMode = 'asr.mode';
 
   Future<String?> _get(String key) async =>
       (await (_db.select(_db.settings)..where((t) => t.key.equals(key)))
@@ -105,4 +107,13 @@ class SettingsRepository {
     await _set(_kReaderLineHeight, p.lineHeight.toString());
     await _set(_kReaderTheme, p.theme.name);
   }
+
+  Future<AsrMode> loadAsrMode() async {
+    final raw = await _get(_kAsrMode);
+    return AsrMode.values
+        .firstWhere((m) => m.name == raw, orElse: () => AsrMode.cloud);
+  }
+
+  Future<void> saveAsrMode(AsrMode mode) async =>
+      _set(_kAsrMode, mode.name);
 }

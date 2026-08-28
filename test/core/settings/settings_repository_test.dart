@@ -56,4 +56,25 @@ void main() {
     expect(prefs.minGapMinutes, 4);
     expect(prefs.triggerRatio, 0.3);
   });
+
+  test('ASR 模式默认 cloud，可切 local 再切回', () async {
+    expect(await repo.loadAsrMode(), AsrMode.cloud);
+    await repo.saveAsrMode(AsrMode.local);
+    expect(await repo.loadAsrMode(), AsrMode.local);
+    await repo.saveAsrMode(AsrMode.cloud);
+    expect(await repo.loadAsrMode(), AsrMode.cloud);
+  });
+
+  test('阅读偏好持久化往返', () async {
+    final p = await repo.loadReaderPrefs();
+    expect(p.fontSize, 17);
+    expect(p.lineHeight, 1.7);
+    expect(p.theme, ReaderTheme.paper);
+    await repo.saveReaderPrefs(const ReaderPrefs(
+        fontSize: 20, lineHeight: 2.0, theme: ReaderTheme.night));
+    final r = await repo.loadReaderPrefs();
+    expect(r.fontSize, 20);
+    expect(r.lineHeight, 2.0);
+    expect(r.theme, ReaderTheme.night);
+  });
 }
