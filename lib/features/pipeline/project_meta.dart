@@ -16,6 +16,7 @@ class ProjectMeta {
     this.asrTaskId,
     this.asrNormalized,
     this.digest,
+    this.mediaMissing = false,
   });
 
   String? sourceFilename;
@@ -28,6 +29,9 @@ class ProjectMeta {
   String? asrTaskId; // S5 断点续跑凭据（app 被杀后凭它续轮询）
   Map<String, dynamic>? asrNormalized; // {"duration_ms":..,"sentences":[..]}
   String? digest; // S9 前情滚动摘要（跨 run 保持）
+
+  /// 项目包迁移标记：视频本体不在包内（仅解说/问答可看，重播需重新导入视频）
+  bool mediaMissing;
 
   String audioPath(String audioDir, int projectId) =>
       '$audioDir/$projectId.${audioFormat ?? 'mp3'}';
@@ -44,6 +48,7 @@ class ProjectMeta {
         if (asrTaskId != null) 'asrTaskId': asrTaskId,
         if (asrNormalized != null) 'asrNormalized': asrNormalized,
         if (digest != null) 'digest': digest,
+        if (mediaMissing) 'mediaMissing': true,
       };
 
   String encode() => jsonEncode(toJson());
@@ -71,6 +76,7 @@ class ProjectMeta {
           ? null
           : Map<String, dynamic>.from(j['asrNormalized'] as Map),
       digest: j['digest'] as String?,
+      mediaMissing: j['mediaMissing'] == true,
     );
   }
 }

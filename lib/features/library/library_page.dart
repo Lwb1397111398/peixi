@@ -1,7 +1,14 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/features/backup/project_package.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
+import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 import 'package:peixi/features/cards/cards_page.dart';
 import 'package:peixi/features/calibration/calibration_page.dart';
@@ -37,6 +44,11 @@ class LibraryPage extends ConsumerWidget {
             tooltip: '复盘',
             onPressed: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const ReviewPage())),
+          ),
+          IconButton(
+            icon: const Icon(Icons.unarchive_outlined),
+            tooltip: '导入项目包',
+            onPressed: () => _importPackage(context, ref),
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
@@ -134,11 +146,11 @@ class _ProjectCard extends ConsumerWidget {
     final status = ProjectStatus.fromDb(project.status);
     final (badge, color) = statusBadge(status, project, state);
 
-    return Card(
+      return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => _open(context, ref),
-        onLongPress: () => _confirmDelete(context, ref),
+        onLongPress: () => _showActions(context, ref),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
@@ -215,6 +227,13 @@ class _ProjectCard extends ConsumerWidget {
   }
 
   Future<void> _open(BuildContext context, WidgetRef ref) async {
+    final meta = ProjectMeta.fromJson(project.metaJson);
+    if (project.type == 'video' && meta.mediaMissing) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('项目包迁移项目：视频文件缺失，解说/问答数据完好；'
+              '重播需重新导入同一视频文件')));
+      return;
+    }
     final status = ProjectStatus.fromDb(project.status);
     if (status == ProjectStatus.waitCalibration) {
       final page = await buildCalibrationPage(
@@ -241,6 +260,84 @@ class _ProjectCard extends ConsumerWidget {
     }
     await Navigator.push(context,
         MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
+  }
+
+  void _showActions(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.archive_outlined),
+            title: const Text('导出项目包'),
+            subtitle: const Text('解说/卡片/问答/小说正文打包为 zip'),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _exportPackage(context, ref);
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error),
+            title: Text('删除项目',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.error)),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _confirmDelete(context, ref);
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _exportPackage(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final pkg = ProjectPackage(ref.read(databaseProvider));
+      final audioDir = await ref
+          .read(pipelineControllerProvider.notifier)
+          .audioDir();
+      final built =
+          await pkg.buildPackage(project.id, audioDir: audioDir.path);
+      String? savedPath;
+      if (Platform.isAndroid) {
+        // Android 无桌面式"另存为"：写入应用文档目录
+        final docs = await getApplicationDocumentsDirectory();
+        final f = File('${docs.path}/${built.fileName}');
+        await f.writeAsBytes(built.bytes);
+        savedPath = f.path;
+      } else {
+        final path = await FilePicker.saveFile(
+            fileName: built.fileName,
+            bytes: Uint8List.fromList(built.bytes));
+        savedPath = path;
+      }
+      messenger.showSnackBar(SnackBar(
+          content: Text(savedPath == null ? '已取消导出' : '已导出：$savedPath')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('导出失败：$e')));
+    }
+  }
+
+  Future<void> _importPackage(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final picked = await FilePicker.pickFiles(
+        type: FileType.custom, allowedExtensions: ['zip', 'peixi']);
+    if (picked.isEmpty) return;
+    final file = picked.single;
+    try {
+      final audioDir = await ref
+          .read(pipelineControllerProvider.notifier)
+          .audioDir();
+      final newId = await ProjectPackage(ref.read(databaseProvider))
+          .importProject(File(file.path!), audioDir: audioDir.path);
+      messenger.showSnackBar(SnackBar(content: Text('项目包已导入（项目 $newId）')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('导入失败：$e')));
+    }
   }
 
   void _confirmDelete(BuildContext context, WidgetRef ref) {
