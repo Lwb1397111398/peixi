@@ -4,13 +4,16 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/asr/asr_client.dart';
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
+import 'package:peixi/core/novel/novel_parser.dart';
 import 'package:peixi/providers.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
+import 'package:peixi/features/pipeline/novel_importer.dart';
+import 'package:peixi/features/pipeline/novel_pipeline.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/scene_segmenter.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
@@ -38,6 +41,7 @@ class ImportResult {
 /// 防并发），App 启动时自动续跑中间状态的项目（含 ASR 轮询续跑）。
 class PipelineController extends Notifier<Map<int, PipelineState>> {
   PipelineEngine? _engine;
+  NovelPipelineEngine? _novelEngine;
   Directory? _audioDir;
 
   @override
@@ -83,22 +87,59 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     return e;
   }
 
+  /// 小说管线（N2-N4）。N3 批注生成器在 A3 完成后接入 annotate 协作器。
+  Future<NovelPipelineEngine> novelEngine() async {
+    if (_novelEngine != null) return _novelEngine!;
+    final e = NovelPipelineEngine(db: ref.read(databaseProvider));
+    final llm = ref.read(llmServiceProvider);
+    final db = ref.read(databaseProvider);
+    e.attachCollaborators(
+      extractCast: (id) =>
+          NovelCharacterExtractor(db: db, llm: llm).extract(id),
+    );
+    e.events.listen(_onEvent);
+    _novelEngine = e;
+    return e;
+  }
+
   Future<void> _resumeAll() async {
     final db = ref.read(databaseProvider);
-    final mid = await (db.select(db.projects)
-          ..where((t) => t.status.isIn([
-                ProjectStatus.imported.db,
-                ProjectStatus.audioReady.db,
-                ProjectStatus.uploaded.db,
-                ProjectStatus.asrDone.db,
-                ProjectStatus.segmented.db,
-                ProjectStatus.commentaryDone.db,
+    // 视频/小说各自状态机互不兼容，按 type 分流续跑
+    final videos = await (db.select(db.projects)
+          ..where((t) => Expression.and([
+                t.type.equals('video'),
+                t.status.isIn([
+                  ProjectStatus.imported.db,
+                  ProjectStatus.audioReady.db,
+                  ProjectStatus.uploaded.db,
+                  ProjectStatus.asrDone.db,
+                  ProjectStatus.segmented.db,
+                  ProjectStatus.commentaryDone.db,
+                ]),
               ])))
         .get();
-    if (mid.isEmpty) return;
-    final e = await engine();
-    for (final p in mid) {
-      unawaitedGuard(() => e.run(p.id));
+    final novels = await (db.select(db.projects)
+          ..where((t) => Expression.and([
+                t.type.equals('novel'),
+                t.status.isIn([
+                  ProjectStatus.imported.db,
+                  ProjectStatus.mapped.db,
+                  ProjectStatus.commentaryDone.db,
+                ]),
+              ])))
+        .get();
+    if (videos.isEmpty && novels.isEmpty) return;
+    if (videos.isNotEmpty) {
+      final e = await engine();
+      for (final p in videos) {
+        unawaitedGuard(() => e.run(p.id));
+      }
+    }
+    if (novels.isNotEmpty) {
+      final e = await novelEngine();
+      for (final p in novels) {
+        unawaitedGuard(() => e.run(p.id));
+      }
     }
   }
 
@@ -176,6 +217,46 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     return ImportResult(projectId: id);
   }
 
+  /// N1 小说导入：选 txt → 编码检测/切章 → 一个事务入库 → 开跑 N2。
+  Future<ImportResult> importNovel() async {
+    final picked = await FilePicker.pickFiles(
+        type: FileType.custom, allowedExtensions: ['txt']);
+    if (picked.isEmpty) return const ImportResult();
+    final path = picked.single.path;
+    if (path == null) return const ImportResult();
+
+    var sourcePath = path;
+    final filename = path.split(Platform.pathSeparator).last;
+    if (Platform.isAndroid) {
+      // 同视频：SAF 缓存路径不可长期依赖，复制进应用目录
+      final dir = await getApplicationDocumentsDirectory();
+      final novels = Directory('${dir.path}/novel')..createSync(recursive: true);
+      final dest =
+          '${novels.path}/${DateTime.now().millisecondsSinceEpoch}_$filename';
+      await File(path).copy(dest);
+      sourcePath = dest;
+    }
+
+    final NovelDoc doc;
+    try {
+      final bytes = await File(sourcePath).readAsBytes();
+      doc = parseNovel(decodeNovelText(bytes));
+    } catch (e) {
+      return ImportResult(error: '无法读取小说文件：$e');
+    }
+    if (doc.chapters.isEmpty) {
+      return const ImportResult(error: '文件为空或无法解析出任何段落');
+    }
+
+    final title = filename.replaceAll(RegExp(r'\.txt$', caseSensitive: false), '');
+    final id = await NovelImporter(db: ref.read(databaseProvider)).import(
+        title: title, sourcePath: sourcePath, doc: doc);
+
+    final e = await novelEngine();
+    unawaitedGuard(() => e.run(id));
+    return ImportResult(projectId: id);
+  }
+
   Future<void> retry(int projectId) async {
     final e = await engine();
     unawaitedGuard(() => e.retry(projectId));
@@ -203,6 +284,10 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
         if (f.existsSync()) f.deleteSync();
       }
       if (Platform.isAndroid && p.sourcePath.contains('/video/')) {
+        final f = File(p.sourcePath);
+        if (f.existsSync()) f.deleteSync();
+      }
+      if (Platform.isAndroid && p.sourcePath.contains('/novel/')) {
         final f = File(p.sourcePath);
         if (f.existsSync()) f.deleteSync();
       }

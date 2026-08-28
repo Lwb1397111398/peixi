@@ -48,7 +48,25 @@ class Prompts {
       '[新场景]$newScene\n'
       '输出：{"digest":"..."}';
 
-  // Prompt D（小说批注）留给 M2，结构与 B 同、锚定 para_range。
+  /// Prompt D（小说批注）结构与 B 同、锚定 para_range，见 novel_annotation()。
+  /// 小说批注 Prompt D 在 M2 A3 中以 [novelAnnotation] 提供。
+
+  /// Prompt N2（小说人物提取，设计稿第五节 N2；措辞自拟，需维持名单滚动更新）
+  static String novelCast({
+    required String roster,
+    required String chapterTitle,
+    required String chapterText,
+  }) =>
+      '你是小说人物整理助手。以下是截至本章为止的已知人物名单，以及本章全文。\n'
+      '[已知人物名单]\n$roster\n'
+      '[本章标题]$chapterTitle\n'
+      '[本章全文]\n$chapterText\n'
+      '任务：\n'
+      '①维护人物名单：收录本章新出现的重要人物，并更新名单中本章人设发生变化的旧人物（未变化的人物不必重复输出）。\n'
+      '②给本章写一句话剧情摘要（60字内），只概括本章内容。\n'
+      '输出：{"characters":[{"name":"","profile":"一句话人设：身份/性格/立场"}],"chapter_summary":"..."}\n'
+      '要求：只依据名单与本章文本，禁止编造未出现的人物；无名龙套不必收录。';
+
 }
 
 /// ms → [hh:mm:ss]（Prompt 对白行用）
