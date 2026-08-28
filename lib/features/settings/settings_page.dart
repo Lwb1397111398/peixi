@@ -30,6 +30,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   AsrMode _asrMode = AsrMode.cloud;
   String? _localModelDir;
   bool _localModelReady = false;
+  PlayPrefs _playPrefs = const PlayPrefs();
 
   @override
   void initState() {
@@ -63,6 +64,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             .read<int>('t');
     _asrMode = await repo.loadAsrMode();
     await _refreshLocalModel();
+    _playPrefs = await repo.loadPlayPrefs();
     if (mounted) setState(() => _loaded = true);
   }
 
@@ -71,6 +73,34 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     _localModelDir = dir;
     _localModelReady = LocalAsrClient(modelDir: dir).isReady;
   }
+
+  Future<void> _savePlayPrefs(PlayPrefs p) async {
+    setState(() => _playPrefs = p);
+    await ref.read(settingsRepoProvider).savePlayPrefs(p);
+  }
+
+  Widget _prefSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String display,
+    required ValueChanged<double> onChanged,
+  }) =>
+      Row(children: [
+        SizedBox(width: 150, child: Text(label)),
+        Expanded(
+          child: Slider(
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: display,
+            value: value.clamp(min, max),
+            onChanged: onChanged,
+          ),
+        ),
+      ]);
 
   @override
   void dispose() {
@@ -230,6 +260,54 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       .bodySmall
                       ?.copyWith(color: Colors.orange.shade300),
                 ),
+              const Divider(height: 32),
+              Text('播放偏好', style: Theme.of(context).textTheme.titleMedium),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('弹幕提问打断（L4）'),
+                subtitle: const Text('播放到关键场景自动暂停提问'),
+                value: _playPrefs.quizEnabled,
+                onChanged: (v) => _savePlayPrefs(
+                    _playPrefs.copyWith(quizEnabled: v)),
+              ),
+              _prefSlider(
+                label: '每集最多提问',
+                value: _playPrefs.maxPerEpisode.toDouble(),
+                min: 1,
+                max: 10,
+                divisions: 9,
+                display: '${_playPrefs.maxPerEpisode} 次',
+                onChanged: (v) => _savePlayPrefs(
+                    _playPrefs.copyWith(maxPerEpisode: v.round())),
+              ),
+              _prefSlider(
+                label: '两次提问最小间隔',
+                value: _playPrefs.minGapMinutes.toDouble(),
+                min: 1,
+                max: 15,
+                divisions: 14,
+                display: '${_playPrefs.minGapMinutes} 分钟',
+                onChanged: (v) => _savePlayPrefs(
+                    _playPrefs.copyWith(minGapMinutes: v.round())),
+              ),
+              _prefSlider(
+                label: '触发位置（场景进度比例）',
+                value: _playPrefs.triggerRatio,
+                min: 0.1,
+                max: 0.6,
+                divisions: 10,
+                display: '${(_playPrefs.triggerRatio * 100).round()}%',
+                onChanged: (v) => _savePlayPrefs(
+                    _playPrefs.copyWith(triggerRatio: v)),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('保留临时音频'),
+                subtitle: const Text('关闭可节省磁盘（重跑需重新抽取）'),
+                value: _playPrefs.keepTempAudio,
+                onChanged: (v) => _savePlayPrefs(
+                    _playPrefs.copyWith(keepTempAudio: v)),
+              ),
               const Divider(height: 32),
               Row(
                 children: [

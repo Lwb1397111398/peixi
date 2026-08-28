@@ -57,6 +57,21 @@ class PlayPrefs {
   final int minGapMinutes;
   final double triggerRatio;
   final bool keepTempAudio;
+
+  PlayPrefs copyWith({
+    bool? quizEnabled,
+    int? maxPerEpisode,
+    int? minGapMinutes,
+    double? triggerRatio,
+    bool? keepTempAudio,
+  }) =>
+      PlayPrefs(
+        quizEnabled: quizEnabled ?? this.quizEnabled,
+        maxPerEpisode: maxPerEpisode ?? this.maxPerEpisode,
+        minGapMinutes: minGapMinutes ?? this.minGapMinutes,
+        triggerRatio: triggerRatio ?? this.triggerRatio,
+        keepTempAudio: keepTempAudio ?? this.keepTempAudio,
+      );
 }
 
 /// 阅读器偏好（设计稿 8.4：字号/行距/背景色含夜间）
