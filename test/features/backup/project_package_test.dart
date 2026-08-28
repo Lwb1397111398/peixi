@@ -121,7 +121,7 @@ void main() {
     final zipFile = await pkg.exportProject(oldId, outputDir: tmp.path, audioDir: audioDir);
     await (db.delete(db.projects)..where((t) => t.id.equals(oldId))).go();
 
-    final newId = await pkg.importProject(zipFile, audioDir: audioDir);
+    await pkg.importProject(zipFile, audioDir: audioDir);
     final p = await db.select(db.projects).getSingle();
     expect(p.type, 'novel');
     expect(p.status, 'READY');

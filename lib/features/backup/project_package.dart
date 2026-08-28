@@ -10,7 +10,7 @@ import 'package:peixi/features/pipeline/project_meta.dart';
 /// 包内结构：
 ///   manifest.json  {version, exportedAt, projectTitle, type}
 ///   db.json        十一表全行（含旧 id，导入时重映射）
-///   audio/<旧项目id>.<ext>  临时音频（存在才打包）
+///   `audio/<旧项目id>.<ext>`  临时音频（存在才打包）
 /// 视频项目不含视频本体；导入后 meta.mediaMissing=true（换设备只能看解说/问答）。
 class ProjectPackage {
   ProjectPackage(this.db);

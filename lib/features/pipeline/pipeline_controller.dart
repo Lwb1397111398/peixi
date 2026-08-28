@@ -9,6 +9,7 @@ import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
+import 'package:peixi/core/novel/epub_parser.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
 import 'package:peixi/providers.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
@@ -229,10 +230,10 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     return ImportResult(projectId: id);
   }
 
-  /// N1 小说导入：选 txt → 编码检测/切章 → 一个事务入库 → 开跑 N2。
+  /// N1 小说导入：选 txt/epub → 编码检测/切章 → 一个事务入库 → 开跑 N2。
   Future<ImportResult> importNovel() async {
     final picked = await FilePicker.pickFiles(
-        type: FileType.custom, allowedExtensions: ['txt']);
+        type: FileType.custom, allowedExtensions: ['txt', 'epub']);
     if (picked.isEmpty) return const ImportResult();
     final path = picked.single.path;
     if (path == null) return const ImportResult();
@@ -251,8 +252,11 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
 
     final NovelDoc doc;
     try {
-      final bytes = await File(sourcePath).readAsBytes();
-      doc = parseNovel(decodeNovelText(bytes));
+      if (filename.toLowerCase().endsWith('.epub')) {
+        doc = parseEpubFile(sourcePath);
+      } else {
+        doc = parseNovel(decodeNovelText(await File(sourcePath).readAsBytes()));
+      }
     } catch (e) {
       return ImportResult(error: '无法读取小说文件：$e');
     }
@@ -260,7 +264,8 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       return const ImportResult(error: '文件为空或无法解析出任何段落');
     }
 
-    final title = filename.replaceAll(RegExp(r'\.txt$', caseSensitive: false), '');
+    final title = filename
+        .replaceAll(RegExp(r'\.(txt|epub)$', caseSensitive: false), '');
     final id = await NovelImporter(db: ref.read(databaseProvider)).import(
         title: title, sourcePath: sourcePath, doc: doc);
 

@@ -23,6 +23,24 @@ import 'package:peixi/providers.dart';
 class LibraryPage extends ConsumerWidget {
   const LibraryPage({super.key});
 
+  Future<void> _importPackage(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final picked = await FilePicker.pickFiles(
+        type: FileType.custom, allowedExtensions: ['zip', 'peixi']);
+    if (picked.isEmpty) return;
+    final file = picked.single;
+    try {
+      final audioDir = await ref
+          .read(pipelineControllerProvider.notifier)
+          .audioDir();
+      final newId = await ProjectPackage(ref.read(databaseProvider))
+          .importProject(File(file.path!), audioDir: audioDir.path);
+      messenger.showSnackBar(SnackBar(content: Text('项目包已导入（项目 $newId）')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('导入失败：$e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final db = ref.watch(databaseProvider);
@@ -313,30 +331,12 @@ class _ProjectCard extends ConsumerWidget {
         final path = await FilePicker.saveFile(
             fileName: built.fileName,
             bytes: Uint8List.fromList(built.bytes));
-        savedPath = path;
+        savedPath = path?.toFilePath(windows: Platform.isWindows);
       }
       messenger.showSnackBar(SnackBar(
           content: Text(savedPath == null ? '已取消导出' : '已导出：$savedPath')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('导出失败：$e')));
-    }
-  }
-
-  Future<void> _importPackage(BuildContext context, WidgetRef ref) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final picked = await FilePicker.pickFiles(
-        type: FileType.custom, allowedExtensions: ['zip', 'peixi']);
-    if (picked.isEmpty) return;
-    final file = picked.single;
-    try {
-      final audioDir = await ref
-          .read(pipelineControllerProvider.notifier)
-          .audioDir();
-      final newId = await ProjectPackage(ref.read(databaseProvider))
-          .importProject(File(file.path!), audioDir: audioDir.path);
-      messenger.showSnackBar(SnackBar(content: Text('项目包已导入（项目 $newId）')));
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('导入失败：$e')));
     }
   }
 
