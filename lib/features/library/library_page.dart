@@ -3,10 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
+import 'package:peixi/features/cards/cards_page.dart';
 import 'package:peixi/features/calibration/calibration_page.dart';
 import 'package:peixi/features/player/player_page.dart';
 import 'package:peixi/features/processing/processing_page.dart';
 import 'package:peixi/features/reader/reader_page.dart';
+import 'package:peixi/features/review/review_page.dart';
 import 'package:peixi/features/settings/settings_page.dart';
 import 'package:peixi/providers.dart';
 
@@ -24,6 +26,18 @@ class LibraryPage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('陪析 · 媒体库'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.school_outlined),
+            tooltip: '卡片集',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const CardsPage())),
+          ),
+          IconButton(
+            icon: const Icon(Icons.fact_check_outlined),
+            tooltip: '复盘',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const ReviewPage())),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',
