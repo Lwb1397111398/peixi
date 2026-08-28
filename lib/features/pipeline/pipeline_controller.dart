@@ -12,6 +12,7 @@ import 'package:peixi/core/novel/novel_parser.dart';
 import 'package:peixi/providers.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
+import 'package:peixi/features/pipeline/novel_commentary_generator.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/novel_pipeline.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
@@ -87,7 +88,7 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     return e;
   }
 
-  /// 小说管线（N2-N4）。N3 批注生成器在 A3 完成后接入 annotate 协作器。
+  /// 小说管线（N2-N4）。
   Future<NovelPipelineEngine> novelEngine() async {
     if (_novelEngine != null) return _novelEngine!;
     final e = NovelPipelineEngine(db: ref.read(databaseProvider));
@@ -96,6 +97,12 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     e.attachCollaborators(
       extractCast: (id) =>
           NovelCharacterExtractor(db: db, llm: llm).extract(id),
+      annotate: (id) => NovelCommentaryGenerator(db: db, llm: llm,
+          onProgress: (done, total) => _onEvent(PipelineEvent(
+              projectId: id,
+              stage: 'commentary',
+              status: ProjectStatus.mapped,
+              progress: total == 0 ? 0 : done / total))).generate(id),
     );
     e.events.listen(_onEvent);
     _novelEngine = e;

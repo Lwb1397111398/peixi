@@ -6,18 +6,28 @@ import 'package:peixi/core/novel/novel_parser.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 
 /// 小说项目 meta_json（sourceFilename 键与视频 ProjectMeta 对齐，
-/// 便于删除逻辑等共用代码读取；novel 专属字段为计数）。
+/// 便于删除逻辑等共用代码读取；novel 专属字段为计数与批注进度）。
 class NovelMeta {
-  NovelMeta({this.sourceFilename, this.paraCount = 0, this.charCount = 0});
+  NovelMeta(
+      {this.sourceFilename, this.paraCount = 0, this.charCount = 0, this.digest, this.annotatedPara = -1});
 
   String? sourceFilename;
   int paraCount;
   int charCount;
 
+  /// N3 滚动前情摘要（Prompt E 产物，≤300 字，跨 run 保持）
+  String? digest;
+
+  /// N3 断点凭据：已批注完成的最大段落全局 idx（-1 = 未开始）。
+  /// 每块批注与该值在同一事务落库，崩溃后按它续跑。
+  int annotatedPara;
+
   Map<String, dynamic> toJson() => {
         if (sourceFilename != null) 'sourceFilename': sourceFilename,
         'paraCount': paraCount,
         'charCount': charCount,
+        if (digest != null) 'digest': digest,
+        'annotatedPara': annotatedPara,
       };
 
   String encode() => jsonEncode(toJson());
@@ -34,6 +44,8 @@ class NovelMeta {
       sourceFilename: j['sourceFilename'] as String?,
       paraCount: (j['paraCount'] as num?)?.toInt() ?? 0,
       charCount: (j['charCount'] as num?)?.toInt() ?? 0,
+      digest: j['digest'] as String?,
+      annotatedPara: (j['annotatedPara'] as num?)?.toInt() ?? -1,
     );
   }
 }
