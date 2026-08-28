@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:gbk_codec/gbk_codec.dart';
+import 'package:peixi/core/novel/gbk_table.dart';
 
 /// N1 小说解析：编码检测 + 段落切分 + 章节切分。
 class NovelChapter {
@@ -21,14 +21,47 @@ class NovelDoc {
           n + c.paragraphs.fold(0, (m, p) => m + p.length));
 }
 
-/// 编码检测：UTF-8 严格解码，失败则按 GBK（GB18030 兼容大部分常用字）兜底。
-/// gbk_codec 的解码永不抛异常，无法再做更细的探测。
+/// 编码检测：UTF-8 严格解码，失败则按 GBK（表驱动，覆盖 GB18030 常用字）。
+/// （偏离：gbk_codec 0.4.0 解码器逐单字节查表、双字节合并逻辑缺失，实测对真实
+/// GBK 文件输出乱码，已替换为按 Python 标准编解码器导出的精确映射表。）
 String decodeNovelText(List<int> bytes) {
   try {
     return utf8.decode(bytes); // 严格模式，非法字节抛 FormatException
   } on FormatException {
-    return gbk.decoder.convert(bytes);
+    return gbkDecodeBytes(bytes);
   }
+}
+
+/// GBK 字节流解码：ASCII 直取，双字节查 [kGbkTable]，
+/// 非法序列以 U+FFFD 占位（不抛异常，尽量保留可读内容）。
+String gbkDecodeBytes(List<int> bytes) {
+  final sb = StringBuffer();
+  var i = 0;
+  while (i < bytes.length) {
+    final b = bytes[i];
+    if (b < 0x80) {
+      sb.writeCharCode(b);
+      i++;
+      continue;
+    }
+    if (b == 0x80) {
+      // CP936 单字节欧元符
+      sb.writeCharCode(0x20AC);
+      i++;
+      continue;
+    }
+    if (i + 1 < bytes.length) {
+      final ch = kGbkTable[(b << 8) | bytes[i + 1]];
+      if (ch != null) {
+        sb.write(ch);
+        i += 2;
+        continue;
+      }
+    }
+    sb.writeCharCode(0xFFFD);
+    i++;
+  }
+  return sb.toString();
 }
 
 // 章标题：第X章/回/卷/节，或 楔子/序章/引子/尾声/终章/番外 等惯用标题。

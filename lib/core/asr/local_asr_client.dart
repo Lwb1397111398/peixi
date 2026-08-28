@@ -30,6 +30,20 @@ class LocalAsrClient {
       File('$modelDir/model.int8.onnx').existsSync() &&
       File('$modelDir/tokens.txt').existsSync();
 
+  /// FFI 绑定一次性初始化（isolate 各自一次；包要求在任何运行时对象前调用）
+  static bool _bindingsReady = false;
+
+  static void _ensureBindings() {
+    if (_bindingsReady) return;
+    try {
+      sherpa.initBindings();
+      _bindingsReady = true;
+    } catch (_) {
+      // 初始化失败不在此处报错：注入假音频加载器（纯 Dart 单测）不需要原生库；
+      // 真正走到原生调用时（readWave/recognizer）会抛出可定位的初始化错误。
+    }
+  }
+
   /// 模型目录查找顺序：①appSupport/models/asr ②exe 同级 models/asr（Windows 便携）
   static Future<String> defaultLocalModelDir() async {
     final support = await getApplicationSupportDirectory();
@@ -49,6 +63,7 @@ class LocalAsrClient {
           '本地 ASR 模型缺失（$modelDir）。请运行 tool/download-sherpa-model.sh 下载模型，'
           '并将 models/asr 目录放到应用支持目录（或 Windows exe 同级目录）。');
     }
+    _ensureBindings(); // readWave 也走原生绑定，须在加载音频前初始化
     final wave = loadWave(audioPath);
     if (wave.samples.isEmpty) {
       return const NormalizedAsr(durationMs: 0, sentences: []);

@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gbk_codec/gbk_codec.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
 
 void main() {
@@ -11,21 +10,30 @@ void main() {
       expect(decodeNovelText(utf8.encode(text)), text);
     });
 
-    test('GBK 字节兜底解码', () {
-      const text = '第一章 山门\n少年抬头望月。';
-      final gbkBytes = <int>[];
-      for (final unit in text.codeUnits) {
-        final enc = gbk.encoder.convert(String.fromCharCode(unit));
-        gbkBytes.addAll(enc);
-      }
-      final decoded = decodeNovelText(gbkBytes);
-      expect(decoded, contains('第一章'));
-      expect(decoded, contains('少年抬头望月'));
+    test('真实 GBK 字节流解码（回归：双字节必须合并查表）', () {
+      // Python 标准编解码器导出的真实 GBK 字节：
+      // "第一章 山门\n少年背剑而行。\n第二章 风起\n他握紧了剑柄。"
+      const hex =
+          'B5 DA D2 BB D5 C2 20 C9 BD C3 C5 0A C9 D9 C4 EA B1 B3 BD A3 B6 F8 '
+          'D0 D0 A1 A3 0A B5 DA B6 FE D5 C2 20 B7 E7 C6 F0 0A CB FB CE D5 BD F4 '
+          'C1 CB BD A3 B1 FA A1 A3';
+      final bytes = hex
+          .split(' ')
+          .map((h) => int.parse(h, radix: 16))
+          .toList();
+      final decoded = decodeNovelText(bytes);
+      expect(decoded, '第一章 山门\n少年背剑而行。\n第二章 风起\n他握紧了剑柄。');
     });
 
-    test('非法字节不抛异常（GBK 永不失败）', () {
-      // 0x80 起头在 UTF-8 非法，GBK 侧映射不到则原样输出
-      expect(() => decodeNovelText([0xFF, 0x81, 0x40]), returnsNormally);
+    test('UTF-8 优先：纯 UTF-8 中文不吃 GBK 误判', () {
+      final bytes = utf8.encode('第一章 网络\n数据在云端。');
+      expect(decodeNovelText(bytes), '第一章 网络\n数据在云端。');
+    });
+
+    test('非法字节以 U+FFFD 占位不抛异常', () {
+      // 0xFF 不是合法 GBK lead 的合法组合开头（0xFF 无映射）
+      final decoded = decodeNovelText([0xFF, 0x81, 0x40]);
+      expect(decoded, contains('\uFFFD'));
     });
   });
 
