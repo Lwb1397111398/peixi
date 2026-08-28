@@ -52,13 +52,55 @@ class LlmService {
     bool jsonMode = false,
     String purpose = '',
     int? projectId,
+  }) =>
+      _send(messages, tier: tier, jsonMode: jsonMode, purpose: purpose,
+          projectId: projectId);
+
+  /// 多模态（vision）调用：单条 user 消息 = 文本 + 图片 data URI。
+  /// 用于 M3 实验性视觉辅助（关键帧判断"谁在说话"）。
+  Future<String> chatVision({
+    required String prompt,
+    required String imageDataUri,
+    LlmTier tier = LlmTier.standard,
+    String purpose = 'vision',
+    int? projectId,
+  }) {
+    final content = <Map<String, dynamic>>[
+      {'type': 'text', 'text': prompt},
+      {
+        'type': 'image_url',
+        'image_url': {'url': imageDataUri},
+      },
+    ];
+    return _send(
+      [
+        {
+          'role': 'user',
+          'content': content,
+        }
+      ],
+      tier: tier,
+      jsonMode: true,
+      purpose: purpose,
+      projectId: projectId,
+      modelOverride: _config?.modelVision,
+    );
+  }
+
+  Future<String> _send(
+    List<dynamic> messages, {
+    LlmTier tier = LlmTier.standard,
+    bool jsonMode = false,
+    String purpose = '',
+    int? projectId,
+    String? modelOverride,
   }) async {
     final cfg = _config;
     if (cfg == null || !cfg.isComplete) {
       throw LlmException('未配置 API（设置页填写 base_url 与 api_key）');
     }
     final body = <String, dynamic>{
-      'model': cfg.modelOf(tier),
+      'model': modelOverride ?? cfg.modelOf(tier),
       'messages': messages,
       if (jsonMode) 'response_format': {'type': 'json_object'},
     };
@@ -82,7 +124,7 @@ class LlmService {
           await db.into(db.llmLogs).insert(LlmLogsCompanion.insert(
                 projectId: Value(projectId),
                 purpose: purpose,
-                model: cfg.modelOf(tier),
+                model: modelOverride ?? cfg.modelOf(tier),
                 promptTokens: Value((usage['prompt_tokens'] as int?) ?? 0),
                 completionTokens:
                     Value((usage['completion_tokens'] as int?) ?? 0),

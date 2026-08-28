@@ -38,4 +38,17 @@ class FakeFFmpegService implements FFmpegService {
 
   @override
   Future<AudioFormat> pickAudioFormat() async => AudioFormat.mp3;
+
+  int keyframeCalls = 0;
+  final keyframeTimes = <int>[];
+
+  @override
+  Future<void> extractKeyframe(
+      String input, int timeMs, String outputJpg) async {
+    keyframeCalls++;
+    keyframeTimes.add(timeMs);
+    File(outputJpg)
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(List.filled(32, 3));
+  }
 }

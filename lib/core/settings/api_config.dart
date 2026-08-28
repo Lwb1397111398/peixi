@@ -11,6 +11,7 @@ class ApiConfig {
     required this.apiKey,
     this.modelCheap = 'qwen-flash',
     this.modelStandard = 'qwen-plus',
+    this.modelVision = 'qwen-vl-plus',
   });
 
   static const bailianBaseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
@@ -19,6 +20,9 @@ class ApiConfig {
   final String apiKey;
   final String modelCheap;
   final String modelStandard;
+
+  /// 视觉模型（M3 实验性视觉辅助：关键帧判断谁在说话）
+  final String modelVision;
 
   String modelOf(LlmTier tier) =>
       tier == LlmTier.cheap ? modelCheap : modelStandard;

@@ -4,7 +4,10 @@ import 'package:drift/drift.dart' show Expression, Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/media/ffmpeg_service.dart';
+import 'package:peixi/features/calibration/visual_assistant.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/providers.dart';
 
@@ -17,9 +20,13 @@ class CalibrationPage extends ConsumerStatefulWidget {
     required this.projectId,
     required this.audioPath,
     required this.onConfirm,
+    this.videoPath,
   });
   final int projectId;
   final String audioPath;
+
+  /// 视频源路径（存在时开放 M3 实验性视觉辅助）
+  final String? videoPath;
   final Future<void> Function(Map<int, String> names) onConfirm;
 
   @override
@@ -48,6 +55,7 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
   Player? _player;
   StreamSubscription<Duration>? _posSub;
   int? _playingSegStart;
+  bool _visionRunning = false;
 
   @override
   void initState() {
@@ -140,6 +148,82 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
     }
   }
 
+  /// M3 实验性视觉辅助：逐簇抽关键帧 → 视觉模型判断 → 弹层逐条采纳
+  Future<void> _runVisualAssist() async {
+    if (_visionRunning || _clusters.isEmpty || widget.videoPath == null) return;
+    setState(() => _visionRunning = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final results =
+        <({int charId, String name, String? suggestion, String? reason})>[];
+    try {
+      final db = ref.read(databaseProvider);
+      final support = await getApplicationSupportDirectory();
+      final assistant = VisualAssistant(
+        db: db,
+        llm: ref.read(llmServiceProvider),
+        ffmpeg: FFmpegKitService(),
+        videoPath: widget.videoPath!,
+        frameDir: '${support.path}/frames',
+      );
+      final candidates = [for (final cl in _clusters) cl.character.name];
+      for (final cl in _clusters) {
+        results.add(await assistant.suggestFor(
+            charId: cl.character.id,
+            name: cl.character.name,
+            sampleLine: cl.lines.first,
+            candidates: candidates));
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('视觉辅助失败：$e')));
+    }
+    if (!mounted) return;
+    setState(() => _visionRunning = false);
+    if (results.every((r) => r.suggestion == null)) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('视觉辅助未能给出可用建议（实验性功能，仅供参考）')));
+      return;
+    }
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('视觉辅助建议（实验性）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            for (final r in results)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                    r.suggestion == null
+                        ? '${r.name}：未能判断'
+                        : '${r.name} → ${r.suggestion}',
+                    style: TextStyle(
+                        color: r.suggestion == null
+                            ? Colors.grey
+                            : Colors.green)),
+                subtitle: r.reason == null ? null : Text(r.reason!),
+                trailing: r.suggestion == null
+                    ? null
+                    : TextButton(
+                        onPressed: () {
+                          _controllers[r.charId]?.text = r.suggestion!;
+                          Navigator.pop(sheetCtx);
+                        },
+                        child: const Text('采纳')),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   void _adoptAll() {
     for (final cl in _clusters) {
       _controllers[cl.character.id]?.text = cl.character.name;
@@ -162,6 +246,17 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
       appBar: AppBar(
         title: const Text('校准说话人'),
         actions: [
+          if (widget.videoPath != null)
+            IconButton(
+              tooltip: '视觉辅助（实验性）',
+              icon: _visionRunning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.visibility_outlined),
+              onPressed: _visionRunning ? null : _runVisualAssist,
+            ),
           TextButton.icon(
             onPressed: _adoptAll,
             icon: const Icon(Icons.done_all, size: 18),
@@ -304,5 +399,6 @@ Future<CalibrationPage> buildCalibrationPage({
     projectId: projectId,
     audioPath: meta.audioPath(dir.path, projectId),
     onConfirm: onConfirm,
+    videoPath: p.sourcePath,
   );
 }

@@ -45,6 +45,10 @@ abstract class FFmpegService {
       {void Function(double)? onProgress});
   Future<String?> extractSubtitle(String input, String outputSrt);
   Future<AudioFormat> pickAudioFormat();
+
+  /// 抽取指定时间点的一帧 jpg（M3 实验性视觉辅助）
+  Future<void> extractKeyframe(
+      String input, int timeMs, String outputJpg);
 }
 
 class FFmpegKitService implements FFmpegService {
@@ -143,6 +147,30 @@ class FFmpegKitService implements FFmpegService {
     } catch (_) {
       return 0;
     }
+  }
+
+  @override
+  Future<void> extractKeyframe(
+      String input, int timeMs, String outputJpg) async {
+    final done = Completer<void>();
+    final seconds = (timeMs / 1000).toStringAsFixed(2);
+    await FFmpegKit.executeAsync(
+      '-y -ss $seconds -i "$input" -frames:v 1 -q:v 3 "$outputJpg"',
+      (s) {
+        s.getReturnCode().then((code) {
+          if (done.isCompleted) return;
+          if (code != null && ReturnCode.isSuccess(code)) {
+            done.complete();
+          } else {
+            done.completeError(
+                Exception('抽帧失败 rc=${code?.getValue()}'));
+          }
+        });
+      },
+      null,
+      null,
+    );
+    return done.future;
   }
 
   @override

@@ -12,6 +12,7 @@ class SettingsRepository {
   static const _kBaseUrl = 'llm.base_url';
   static const _kModelCheap = 'llm.model_cheap';
   static const _kModelStandard = 'llm.model_standard';
+  static const _kModelVision = 'llm.model_vision';
   static const _kOssBucket = 'oss.bucket';
   static const _kOssEndpoint = 'oss.endpoint';
   // secure storage 键
@@ -46,12 +47,14 @@ class SettingsRepository {
         apiKey: await _secure.read(key: _sApiKey) ?? '',
         modelCheap: await _get(_kModelCheap) ?? 'qwen-flash',
         modelStandard: await _get(_kModelStandard) ?? 'qwen-plus',
+        modelVision: await _get(_kModelVision) ?? 'qwen-vl-plus',
       );
 
   Future<void> saveApiConfig(ApiConfig c) async {
     await _set(_kBaseUrl, c.baseUrl);
     await _set(_kModelCheap, c.modelCheap);
     await _set(_kModelStandard, c.modelStandard);
+    await _set(_kModelVision, c.modelVision);
     await _secure.write(key: _sApiKey, value: c.apiKey);
   }
 
