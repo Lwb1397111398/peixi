@@ -54,3 +54,17 @@ class PlayPrefs {
   final double triggerRatio;
   final bool keepTempAudio;
 }
+
+/// 阅读器偏好（设计稿 8.4：字号/行距/背景色含夜间）
+enum ReaderTheme { paper, sepia, night }
+
+class ReaderPrefs {
+  const ReaderPrefs({
+    this.fontSize = 17,
+    this.lineHeight = 1.7,
+    this.theme = ReaderTheme.paper,
+  });
+  final double fontSize;
+  final double lineHeight;
+  final ReaderTheme theme;
+}

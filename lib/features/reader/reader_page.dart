@@ -1,0 +1,487 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/features/reader/reader.dart';
+import 'package:peixi/providers.dart';
+
+/// 小说阅读器（设计稿 8.4）：
+/// 正文纵向滚动（字号/行距/背景可调含夜间）；段落尾部 L1-L4 彩色气泡角标，
+/// 点击弹底部卡片；L4 为段间展开卡片（作答/跳过写 qa_records）；
+/// 顶部章节抽屉；右上本书人物列表（点击看人设）。
+class ReaderPage extends ConsumerStatefulWidget {
+  const ReaderPage({super.key, required this.projectId});
+  final int projectId;
+
+  @override
+  ConsumerState<ReaderPage> createState() => _ReaderPageState();
+}
+
+class _ReaderPageState extends ConsumerState<ReaderPage> {
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+  late ReaderRepository _repo;
+
+  ReaderPrefs _prefs = const ReaderPrefs();
+  List<Chapter> _chapters = [];
+  List<Character> _cast = [];
+  int _chapterIdx = 0;
+  List<Paragraph> _paragraphs = [];
+  Map<int, List<Annotation>> _anns = {};
+  bool _loading = true;
+
+  // L4 段间卡片状态（paraId 键）
+  final _l4Controllers = <int, TextEditingController>{};
+  final _l4Answered = <int, String?>{}; // null=未作答，''=跳过
+
+  static const _bgColors = {
+    ReaderTheme.paper: Color(0xFFFAFAF5),
+    ReaderTheme.sepia: Color(0xFFF5EDDC),
+    ReaderTheme.night: Color(0xFF141414),
+  };
+  static const _textColors = {
+    ReaderTheme.paper: Color(0xFF262626),
+    ReaderTheme.sepia: Color(0xFF4A3F33),
+    ReaderTheme.night: Color(0xFFC9C9C9),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _repo = ReaderRepository(ref.read(databaseProvider));
+    _init();
+  }
+
+  Future<void> _init() async {
+    _prefs = await ref.read(settingsRepoProvider).loadReaderPrefs();
+    _chapters = await _repo.chapters(widget.projectId);
+    _cast = await _repo.cast(widget.projectId);
+    if (!mounted) return;
+    setState(() {});
+    if (_chapters.isNotEmpty) await _openChapter(0);
+  }
+
+  Future<void> _openChapter(int idx) async {
+    setState(() => _loading = true);
+    _chapterIdx = idx;
+    _paragraphs = await _repo.paragraphs(_chapters[idx].id);
+    _anns =
+        await _repo.annotationsByParaId([for (final p in _paragraphs) p.id]);
+    if (!mounted) return;
+    setState(() => _loading = false);
+  }
+
+  Future<void> _updatePrefs(ReaderPrefs p) async {
+    setState(() => _prefs = p);
+    await ref.read(settingsRepoProvider).saveReaderPrefs(p);
+  }
+
+  @override
+  void dispose() {
+    for (final c in _l4Controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = _bgColors[_prefs.theme]!;
+    final fg = _textColors[_prefs.theme]!;
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: bg,
+      appBar: AppBar(
+        title: Text(
+          _chapters.isEmpty
+              ? '阅读器'
+              : (_chapters[_chapterIdx].title ?? '第${_chapterIdx + 1}部分'),
+        ),
+        leading: IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer()),
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.groups),
+              tooltip: '本书人物',
+              onPressed: _showCastSheet),
+          IconButton(
+              icon: const Icon(Icons.text_fields),
+              tooltip: '阅读设置',
+              onPressed: _showPrefsSheet),
+        ],
+      ),
+      drawer: _buildChapterDrawer(fg),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _chapters.isEmpty
+              ? const Center(child: Text('本书没有章节'))
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 48),
+                  itemCount: _paragraphs.length,
+                  itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
+                ),
+    );
+  }
+
+  Widget _buildChapterDrawer(Color fg) {
+    return Drawer(
+      child: SafeArea(
+        child: ListView.builder(
+          itemCount: _chapters.length,
+          itemBuilder: (_, i) {
+            final ch = _chapters[i];
+            final selected = i == _chapterIdx;
+            return ListTile(
+              selected: selected,
+              title: Text(
+                ch.title ?? '第${i + 1}部分',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: selected ? null : fg),
+              ),
+              onTap: () {
+                Navigator.pop(context); // 关抽屉
+                _openChapter(i);
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _paragraphItem(Paragraph para, Color fg) {
+    final anns = _anns[para.id] ?? const <Annotation>[];
+    final bubbles = [
+      for (final a in anns)
+        if (a.type != 'L4') _bubble(a),
+    ];
+    final l4 = anns.where((a) => a.type == 'L4').toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          para.content,
+          style: TextStyle(
+              fontSize: _prefs.fontSize,
+              height: _prefs.lineHeight,
+              color: fg),
+        ),
+        if (bubbles.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Wrap(spacing: 6, children: bubbles),
+        ],
+        for (final a in l4) ...[
+          const SizedBox(height: 10),
+          _l4Card(a, fg),
+        ],
+        const SizedBox(height: 18),
+      ],
+    );
+  }
+
+  Color _annColor(String type) => switch (type) {
+        'L1' => const Color(0xFF4FC3F7), // 蓝 潜台词
+        'L2' => const Color(0xFFBA68C8), // 紫 心理
+        'L3' => const Color(0xFF66BB6A), // 绿 知识
+        'L4' => const Color(0xFFFFB74D), // 橙 思考题
+        _ => Colors.grey,
+      };
+
+  String _annLabel(String type) => switch (type) {
+        'L1' => 'L1 潜台词',
+        'L2' => 'L2 心理',
+        'L3' => 'L3 知识',
+        'L4' => 'L4 思考题',
+        _ => type,
+      };
+
+  Widget _bubble(Annotation a) {
+    return GestureDetector(
+      key: ValueKey('bubble-${a.id}'),
+      onTap: () => _showAnnotationSheet(a),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+            color: _annColor(a.type).withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(10)),
+        child: Text(a.type,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+
+  void _showAnnotationSheet(Annotation a) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(Icons.label_important, size: 16, color: _annColor(a.type)),
+                const SizedBox(width: 6),
+                Text(_annLabel(a.type),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                TextButton(
+                    onPressed: () => Navigator.pop(sheetCtx),
+                    child: const Text('关闭')),
+              ]),
+              const SizedBox(height: 8),
+              _annotationBody(a),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _annotationBody(Annotation a) {
+    switch (a.type) {
+      case 'L1':
+      case 'L2':
+        final text = decodeL1L2(a.contentJson) ?? '（批注内容为空）';
+        return Text(text);
+      case 'L3':
+        final c = decodeL3(a.contentJson);
+        if (c == null) return const Text('（批注内容为空）');
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(c.term,
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(c.text),
+          if (c.uncertain) ...[
+            const SizedBox(height: 6),
+            Chip(
+                label: const Text('不确定，仅供参考'),
+                backgroundColor: Colors.orange.shade100),
+          ],
+        ]);
+      default:
+        return const Text('（批注内容为空）');
+    }
+  }
+
+  Widget _l4Card(Annotation a, Color fg) {
+    final c = decodeL4(a.contentJson);
+    if (c == null) return const SizedBox.shrink();
+    final answered = _l4Answered.containsKey(a.id);
+    final controller = _l4Controllers.putIfAbsent(a.id, TextEditingController.new);
+
+    return Card(
+      color: _annColor('L4').withValues(alpha: 0.12),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(Icons.psychology, size: 16, color: _annColor('L4')),
+              const SizedBox(width: 6),
+              Text('L4 思考题',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: _annColor('L4'))),
+            ]),
+            const SizedBox(height: 8),
+            Text(c.question,
+                style: TextStyle(
+                    fontSize: _prefs.fontSize, fontWeight: FontWeight.w600, color: fg)),
+            const SizedBox(height: 10),
+            if (!answered) ...[
+              TextField(
+                controller: controller,
+                minLines: 2,
+                maxLines: 4,
+                decoration:
+                    const InputDecoration(hintText: '写下你的想法…（可留空跳过）'),
+              ),
+              const SizedBox(height: 8),
+              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                TextButton(
+                    onPressed: () => _submitAnswer(a, c.perspectives, null),
+                    child: const Text('跳过本题')),
+                const SizedBox(width: 8),
+                FilledButton(
+                    onPressed: () => _submitAnswer(
+                        a, c.perspectives, controller.text.trim()),
+                    child: const Text('提交回答')),
+              ]),
+            ] else ...[
+              if (_l4Answered[a.id] == '')
+                Text('已跳过',
+                    style: TextStyle(fontSize: 12, color: fg.withValues(alpha: 0.6)))
+              else
+                Text('我的回答：${_l4Answered[a.id]}',
+                    style: TextStyle(fontSize: 13, color: fg)),
+              const SizedBox(height: 10),
+              Text('参考视角',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: _annColor('L4'))),
+              const SizedBox(height: 4),
+              for (final p in c.perspectives)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text('• $p',
+                      style: TextStyle(fontSize: 14, color: fg)),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitAnswer(
+      Annotation a, List<String> perspectives, String? answer) async {
+    final skipped = answer == null || answer.isEmpty;
+    await _repo.recordAnswer(
+        projectId: widget.projectId,
+        question: decodeL4(a.contentJson)?.question ?? '',
+        perspectives: perspectives,
+        answer: answer,
+        skipped: skipped);
+    if (!mounted) return;
+    setState(() => _l4Answered[a.id] = skipped ? '' : answer);
+  }
+
+  void _showPrefsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) => StatefulBuilder(builder: (ctx, setSheet) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(children: [
+                const Text('阅读设置',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('完成')),
+              ]),
+              Row(children: [
+                const Text('字号'),
+                Expanded(
+                  child: Slider(
+                    min: 14,
+                    max: 24,
+                    divisions: 10,
+                    label: _prefs.fontSize.round().toString(),
+                    value: _prefs.fontSize,
+                    onChanged: (v) {
+                      setSheet(() {});
+                      _updatePrefs(ReaderPrefs(
+                          fontSize: v,
+                          lineHeight: _prefs.lineHeight,
+                          theme: _prefs.theme));
+                    },
+                  ),
+                ),
+              ]),
+              Row(children: [
+                const Text('行距'),
+                Expanded(
+                  child: Slider(
+                    min: 1.2,
+                    max: 2.2,
+                    divisions: 10,
+                    label: _prefs.lineHeight.toStringAsFixed(1),
+                    value: _prefs.lineHeight,
+                    onChanged: (v) {
+                      setSheet(() {});
+                      _updatePrefs(ReaderPrefs(
+                          fontSize: _prefs.fontSize,
+                          lineHeight: v,
+                          theme: _prefs.theme));
+                    },
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              SegmentedButton<ReaderTheme>(
+                segments: const [
+                  ButtonSegment(
+                      value: ReaderTheme.paper, label: Text('纸白')),
+                  ButtonSegment(
+                      value: ReaderTheme.sepia, label: Text('米黄')),
+                  ButtonSegment(
+                      value: ReaderTheme.night, label: Text('夜间')),
+                ],
+                selected: {_prefs.theme},
+                onSelectionChanged: (s) {
+                  setSheet(() {});
+                  _updatePrefs(ReaderPrefs(
+                      fontSize: _prefs.fontSize,
+                      lineHeight: _prefs.lineHeight,
+                      theme: s.first));
+                },
+              ),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
+
+  void _showCastSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              const Text('本书人物',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              TextButton(
+                  onPressed: () => Navigator.pop(sheetCtx),
+                  child: const Text('关闭')),
+            ]),
+            const SizedBox(height: 4),
+            if (_cast.isEmpty)
+              const Padding(
+                  padding: EdgeInsets.all(12), child: Text('暂无人物信息')),
+            for (final c in _cast)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: CircleAvatar(
+                    radius: 14,
+                    child: Text(c.name.isEmpty ? '?' : c.name[0])),
+                title: Text(c.name),
+                subtitle: Text(
+                  c.aliasesJson.isEmpty ||
+                          c.aliasesJson == '[]'
+                      ? '（暂无人设）'
+                      : c.aliasesJson,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+}

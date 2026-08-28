@@ -24,6 +24,10 @@ class SettingsRepository {
   static const _kMinGap = 'play.min_gap_minutes';
   static const _kTriggerRatio = 'play.trigger_ratio';
   static const _kKeepTempAudio = 'play.keep_temp_audio';
+  // 阅读偏好键
+  static const _kReaderFontSize = 'reader.font_size';
+  static const _kReaderLineHeight = 'reader.line_height';
+  static const _kReaderTheme = 'reader.theme';
 
   Future<String?> _get(String key) async =>
       (await (_db.select(_db.settings)..where((t) => t.key.equals(key)))
@@ -82,5 +86,23 @@ class SettingsRepository {
     await _set(_kMinGap, p.minGapMinutes.toString());
     await _set(_kTriggerRatio, p.triggerRatio.toString());
     await _set(_kKeepTempAudio, p.keepTempAudio ? '1' : '0');
+  }
+
+  Future<ReaderPrefs> loadReaderPrefs() async {
+    final themeName = await _get(_kReaderTheme);
+    return ReaderPrefs(
+      fontSize:
+          double.tryParse(await _get(_kReaderFontSize) ?? '') ?? 17,
+      lineHeight:
+          double.tryParse(await _get(_kReaderLineHeight) ?? '') ?? 1.7,
+      theme: ReaderTheme.values.firstWhere((t) => t.name == themeName,
+          orElse: () => ReaderTheme.paper),
+    );
+  }
+
+  Future<void> saveReaderPrefs(ReaderPrefs p) async {
+    await _set(_kReaderFontSize, p.fontSize.toString());
+    await _set(_kReaderLineHeight, p.lineHeight.toString());
+    await _set(_kReaderTheme, p.theme.name);
   }
 }
