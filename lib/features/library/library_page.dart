@@ -6,6 +6,7 @@ import 'package:peixi/features/pipeline/project_status.dart';
 import 'package:peixi/features/calibration/calibration_page.dart';
 import 'package:peixi/features/player/player_page.dart';
 import 'package:peixi/features/processing/processing_page.dart';
+import 'package:peixi/features/reader/reader_page.dart';
 import 'package:peixi/features/settings/settings_page.dart';
 import 'package:peixi/providers.dart';
 
@@ -31,19 +32,45 @@ class LibraryPage extends ConsumerWidget {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.video_file_outlined),
-        label: const Text('导入视频'),
-        onPressed: () async {
-          final res = await ref
-              .read(pipelineControllerProvider.notifier)
-              .importVideo();
-          if (!context.mounted) return;
-          if (res.error != null) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text(res.error!)));
-          }
-        },
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'import_video',
+            icon: const Icon(Icons.video_file_outlined),
+            label: const Text('导入视频'),
+            onPressed: () async {
+              final res = await ref
+                  .read(pipelineControllerProvider.notifier)
+                  .importVideo();
+              if (!context.mounted) return;
+              if (res.error != null) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text(res.error!)));
+              }
+            },
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'import_novel',
+            icon: const Icon(Icons.auto_stories_outlined),
+            label: const Text('导入小说'),
+            onPressed: () async {
+              final res = await ref
+                  .read(pipelineControllerProvider.notifier)
+                  .importNovel();
+              if (!context.mounted) return;
+              if (res.error != null) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text(res.error!)));
+              } else if (res.projectId != null) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('小说已导入，正在提取人物与生成批注…')));
+              }
+            },
+          ),
+        ],
       ),
       body: StreamBuilder<List<Project>>(
         stream: projects,
@@ -60,7 +87,7 @@ class LibraryPage extends ConsumerWidget {
                   Text('还没有项目',
                       style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
-                  const Text('点右下角导入一集视频试试'),
+                  const Text('点右下角导入一集视频或一本 TXT 小说'),
                 ],
               ),
             );
@@ -123,8 +150,8 @@ class _ProjectCard extends ConsumerWidget {
               ]),
               const Spacer(),
               Text(status == ProjectStatus.failed
-                  ? '失败：${stageLabelOf(project.failedStage)}'
-                  : statusLabel(status),
+                  ? '失败：${stageLabelOf(project.failedStage, isNovel: project.type == 'novel')}'
+                  : statusLabel(status, isNovel: project.type == 'novel'),
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
@@ -190,8 +217,12 @@ class _ProjectCard extends ConsumerWidget {
     }
     if (!context.mounted) return;
     if (status == ProjectStatus.ready) {
-      await Navigator.push(context,
-          MaterialPageRoute(builder: (_) => PlayerPage(projectId: project.id)));
+      // 小说进阅读器，视频进播放器（N4/设计稿 8.4）
+      final page = project.type == 'novel'
+          ? ReaderPage(projectId: project.id)
+          : PlayerPage(projectId: project.id);
+      await Navigator.push(
+          context, MaterialPageRoute(builder: (_) => page));
       return;
     }
     await Navigator.push(context,
@@ -228,7 +259,7 @@ class _ProjectCard extends ConsumerWidget {
     ProjectStatus status, Project project, PipelineState? state) {
   switch (status) {
     case ProjectStatus.ready:
-      return ('可观看', Colors.green);
+      return project.type == 'novel' ? ('可阅读', Colors.green) : ('可观看', Colors.green);
     case ProjectStatus.waitCalibration:
       return ('待校准', Colors.orange);
     case ProjectStatus.failed:
@@ -238,27 +269,27 @@ class _ProjectCard extends ConsumerWidget {
   }
 }
 
-String statusLabel(ProjectStatus status) => switch (status) {
-      ProjectStatus.imported => '已导入 · 准备处理',
+String statusLabel(ProjectStatus status, {bool isNovel = false}) => switch (status) {
+      ProjectStatus.imported => isNovel ? '已导入 · 提取人物中' : '已导入 · 准备处理',
       ProjectStatus.audioReady => '音频已就绪',
       ProjectStatus.uploaded => '已上传 · 识别排队中',
       ProjectStatus.asrDone => '转录完成 · 角色映射中',
-      ProjectStatus.mapped => '映射完成',
+      ProjectStatus.mapped => isNovel ? '人物提取完成 · 生成批注中' : '映射完成',
       ProjectStatus.calibrated => '校准完成 · 切分场景中',
       ProjectStatus.segmented => '场景已切分 · 生成解说中',
-      ProjectStatus.commentaryDone => '解说完成 · 收尾中',
+      ProjectStatus.commentaryDone => isNovel ? '批注完成 · 收尾中' : '解说完成 · 收尾中',
       _ => '',
     };
 
-String stageLabelOf(String? failedStage) =>
+String stageLabelOf(String? failedStage, {bool isNovel = false}) =>
     failedStage == null ? '未知阶段' : switch (failedStage) {
         'subtitle' => '字幕提取',
         'audio' => '音频抽取',
         'upload' => '上传中转',
         'asr' => '语音识别',
-        'map' => '角色映射',
+        'map' => isNovel ? '人物提取' : '角色映射',
         'segment' => '场景切分',
-        'commentary' => '解说生成',
+        'commentary' => isNovel ? '批注生成' : '解说生成',
         'finalize' => '收尾',
         _ => failedStage,
       };
