@@ -22,12 +22,14 @@ class PipelineEvent {
     required this.status,
     this.progress,
     this.detail,
+    this.cancelled = false,
   });
   final int projectId;
   final String stage; // subtitle|audio|upload|asr|map|segment|commentary|finalize
   final ProjectStatus status;
   final double? progress; // 0-1；null = 无进度概念（如轮询）
   final String? detail;
+  final bool cancelled; // 用户主动取消（区别于失败）
 }
 
 class PipelineException implements Exception {
@@ -35,6 +37,14 @@ class PipelineException implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+/// 用户取消（_stage 捕获后按"已取消"处理，不置 FAILED；
+/// 进度均按阶段落盘，续跑/重试可无损恢复）。
+class PipelineCancelled implements Exception {
+  const PipelineCancelled();
+  @override
+  String toString() => '已取消';
 }
 
 /// 视频处理状态机（设计稿第四节 S1-S10）。
@@ -78,15 +88,29 @@ class PipelineEngine {
       StreamController<PipelineEvent>.broadcast();
   Stream<PipelineEvent> get events => _events.stream;
   final Set<int> _busy = {};
+  final Set<int> _cancelRequested = {};
+
+  /// 请求取消（仅当项目正在运行时登记；同时中止进行中的 ffmpeg 抽取）。
+  /// 取消是协作式：各阶段循环/轮询检查标记后抛 [PipelineCancelled]。
+  /// 注：cancelActive 会中止所有 ffmpeg 会话，个人应用无并发抽取场景。
+  void requestCancel(int projectId) {
+    if (!_busy.contains(projectId)) return;
+    _cancelRequested.add(projectId);
+    _ffmpeg.cancelActive();
+  }
+
+  /// 供协作器循环（解说/批注）检查取消标记。
+  bool isCancelled(int projectId) => _cancelRequested.contains(projectId);
 
   void _emit(int projectId, String stage, ProjectStatus status,
-      {double? progress, String? detail}) {
+      {double? progress, String? detail, bool cancelled = false}) {
     _events.add(PipelineEvent(
         projectId: projectId,
         stage: stage,
         status: status,
         progress: progress,
-        detail: detail));
+        detail: detail,
+        cancelled: cancelled));
   }
 
   Future<Project> _project(int id) async {
@@ -189,19 +213,34 @@ class PipelineEngine {
     await run(projectId);
   }
 
-  /// 包裹单阶段：异常 → FAILED + failed_stage 落盘 + 事件。
+  /// 包裹单阶段：异常 → FAILED + failed_stage 落盘 + 事件；
+  /// 取消（标记命中或 [PipelineCancelled]）→ 事件标注 cancelled，状态保持当前落盘值。
   Future<bool> _stage(
       int id, String name, Future<void> Function(int) step) async {
     final p = await _project(id);
     _emit(id, name, ProjectStatus.fromDb(p.status));
     try {
       await step(id);
+      if (_cancelRequested.remove(id)) {
+        await _emitCancelled(id, name);
+        return false;
+      }
       return true;
     } catch (e) {
+      if (_cancelRequested.remove(id) || e is PipelineCancelled) {
+        await _emitCancelled(id, name);
+        return false;
+      }
       await _setStatus(id, ProjectStatus.failed, failedStage: name);
       _emit(id, name, ProjectStatus.failed, detail: '$e');
       return false;
     }
+  }
+
+  Future<void> _emitCancelled(int id, String name) async {
+    final p = await _project(id);
+    _emit(id, name, ProjectStatus.fromDb(p.status),
+        detail: '已取消（进度已保存，可继续）', cancelled: true);
   }
 
   // ---------- S2 字幕提取（可选，失败不阻塞） ----------
@@ -311,6 +350,7 @@ class PipelineEngine {
       final deadline = DateTime.now().add(pollTimeout);
       String? transcriptionUrl;
       while (true) {
+        if (_cancelRequested.contains(id)) throw const PipelineCancelled();
         final r = await _asr.poll(apiCfg.apiKey, meta.asrTaskId!);
         if (r.phase == AsrTaskPhase.succeeded) {
           transcriptionUrl = r.transcriptionUrl;

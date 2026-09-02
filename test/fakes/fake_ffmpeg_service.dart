@@ -43,6 +43,13 @@ class FakeFFmpegService implements FFmpegService {
   final keyframeTimes = <int>[];
 
   @override
+  void cancelActive() {
+    cancelCalls++;
+  }
+
+  int cancelCalls = 0;
+
+  @override
   Future<void> extractKeyframe(
       String input, int timeMs, String outputJpg) async {
     keyframeCalls++;

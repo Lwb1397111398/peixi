@@ -69,7 +69,8 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       audioDir: await audioDir(),
       localAsr: (audioPath) async {
         final modelDir = await LocalAsrClient.defaultLocalModelDir();
-        return LocalAsrClient(modelDir: modelDir).recognize(audioPath);
+        return LocalAsrClient.recognizeInBackground(
+            modelDir: modelDir, audioPath: audioPath);
       },
     );
     // S6/S8/S9 协作器装配（偏离：引擎不直接依赖 LLM，保持可测）
@@ -83,6 +84,7 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
         db: db,
         llm: llm,
         apiConfig: () => llm.config ?? fallback,
+        isCancelled: () => e.isCancelled(id),
         onProgress: (done, total) => _onEvent(PipelineEvent(
             projectId: id,
             stage: 'commentary',
@@ -102,9 +104,13 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     final llm = ref.read(llmServiceProvider);
     final db = ref.read(databaseProvider);
     e.attachCollaborators(
-      extractCast: (id) =>
-          NovelCharacterExtractor(db: db, llm: llm).extract(id),
+      extractCast: (id) => NovelCharacterExtractor(
+        db: db,
+        llm: llm,
+        isCancelled: () => e.isCancelled(id),
+      ).extract(id),
       annotate: (id) => NovelCommentaryGenerator(db: db, llm: llm,
+          isCancelled: () => e.isCancelled(id),
           onProgress: (done, total) => _onEvent(PipelineEvent(
               projectId: id,
               stage: 'commentary',
@@ -166,7 +172,8 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
   }
 
   void _onEvent(PipelineEvent e) {
-    final busy = e.status != ProjectStatus.failed &&
+    final busy = !e.cancelled &&
+        e.status != ProjectStatus.failed &&
         e.status != ProjectStatus.ready &&
         e.status != ProjectStatus.waitCalibration;
     state = {
@@ -294,6 +301,21 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     final e = await novelEngine();
     unawaitedGuard(() => e.run(id));
     return ImportResult(projectId: id);
+  }
+
+  /// 请求取消处理（协作式：当前阶段循环/轮询命中标记即中断，
+  /// 已落盘进度保留，处理页/库卡片可"继续处理"）。
+  Future<void> cancel(int projectId) async {
+    final db = ref.read(databaseProvider);
+    final p = await (db.select(db.projects)
+          ..where((t) => t.id.equals(projectId)))
+        .getSingleOrNull();
+    if (p == null) return;
+    if (p.type == 'novel') {
+      (await novelEngine()).requestCancel(projectId);
+    } else {
+      (await engine()).requestCancel(projectId);
+    }
   }
 
   Future<void> retry(int projectId) async {

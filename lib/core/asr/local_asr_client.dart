@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -56,6 +57,16 @@ class LocalAsrClient {
     } catch (_) {}
     return primary;
   }
+
+  /// 在后台 isolate 完成整段识别（读音频/模型加载/推理/切句）。
+  /// [recognize] 内是同步 FFI 循环，直接在 UI isolate 调用会冻结整个应用；
+  /// FFI 绑定按 isolate 各自初始化（_ensureBindings），模型目录须由调用方
+  /// 在主 isolate 解析好传入（isolate 内不做 path_provider 插件调用）。
+  static Future<NormalizedAsr> recognizeInBackground({
+    required String modelDir,
+    required String audioPath,
+  }) =>
+      Isolate.run(() => LocalAsrClient(modelDir: modelDir).recognize(audioPath));
 
   Future<NormalizedAsr> recognize(String audioPath) async {
     if (!isReady) {

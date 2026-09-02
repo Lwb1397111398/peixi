@@ -8,6 +8,7 @@ import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/llm/prompts.dart';
 import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
+import 'package:peixi/features/pipeline/pipeline_engine.dart';
 
 /// N3 批注生成（设计稿第五节 N3 + Prompt D）：
 /// 按章内段落块（~2000 字）全局顺序调用，上下文 = 前情滚动摘要 + 本章已读
@@ -20,6 +21,7 @@ class NovelCommentaryGenerator {
     required LlmService llm,
     this.blockChars = 2000,
     this.onProgress,
+    this.isCancelled,
   })  : _db = db,
         _llm = llm;
 
@@ -27,6 +29,9 @@ class NovelCommentaryGenerator {
   final LlmService _llm;
   final int blockChars;
   final void Function(int done, int total)? onProgress;
+
+  /// 返回 true 时抛 [PipelineCancelled] 中断循环（已完成块已落库，可续跑）
+  final bool Function()? isCancelled;
 
   /// 一块 = [startPara, endPara] 的段落行（含段落 id 与全局 idx）
   Future<void> generate(int projectId) async {
@@ -57,6 +62,7 @@ class NovelCommentaryGenerator {
     var recentSummaries = <String>[]; // 本章已读块概要（最近 2 块）
     for (final blocks in chapterBlocks) {
       for (final block in blocks) {
+        if (isCancelled?.call() ?? false) throw const PipelineCancelled();
         final startPara = block.first.idx;
         final endPara = block.last.idx;
         if (endPara <= meta.annotatedPara) {

@@ -49,6 +49,9 @@ abstract class FFmpegService {
   /// 抽取指定时间点的一帧 jpg（M3 实验性视觉辅助）
   Future<void> extractKeyframe(
       String input, int timeMs, String outputJpg);
+
+  /// 中止当前所有进行中的会话（取消处理用）
+  void cancelActive();
 }
 
 class FFmpegKitService implements FFmpegService {
@@ -189,6 +192,9 @@ class FFmpegKitService implements FFmpegService {
     );
     return done.future;
   }
+
+  @override
+  void cancelActive() => FFmpegKit.cancel();
 
   @override
   Future<String?> extractSubtitle(String input, String outputSrt) async {

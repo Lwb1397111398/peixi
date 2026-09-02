@@ -5,6 +5,7 @@ import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/llm/prompts.dart';
 import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 
 /// S9 逐场景解说生成（防剧透核心，设计稿 6.3/6.4/S9）：
@@ -17,12 +18,16 @@ class CommentaryGenerator {
     required this.llm,
     required this.apiConfig,
     this.onProgress,
+    this.isCancelled,
   });
 
   final AppDatabase db;
   final LlmService llm;
   final ApiConfig Function() apiConfig;
   final void Function(int done, int total)? onProgress;
+
+  /// 返回 true 时抛 [PipelineCancelled] 中断循环（已完成场景已落库，可续跑）
+  final bool Function()? isCancelled;
 
   Future<void> generate(int projectId) async {
     final p = await (db.select(db.projects)
@@ -47,6 +52,7 @@ class CommentaryGenerator {
         .get();
 
     for (var i = 0; i < scenes.length; i++) {
+      if (isCancelled?.call() ?? false) throw const PipelineCancelled();
       final scene = scenes[i];
 
       // 续跑：已 done 的跳过

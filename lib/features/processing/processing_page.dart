@@ -31,6 +31,18 @@ class ProcessingPage extends ConsumerWidget {
     ('finalize', '收尾'),
   ];
 
+  /// 非失败、非就绪、非校准闸门的中间态：可"继续处理"（含取消后恢复）
+  static const _resumable = {
+    ProjectStatus.imported,
+    ProjectStatus.audioReady,
+    ProjectStatus.uploaded,
+    ProjectStatus.asrDone,
+    ProjectStatus.mapped,
+    ProjectStatus.calibrated,
+    ProjectStatus.segmented,
+    ProjectStatus.commentaryDone,
+  };
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final db = ref.watch(databaseProvider);
@@ -78,6 +90,14 @@ class ProcessingPage extends ConsumerWidget {
                             style: TextStyle(fontSize: 13))),
                   ]),
                 ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('取消处理'),
+                  onPressed: () => ref
+                      .read(pipelineControllerProvider.notifier)
+                      .cancel(projectId),
+                ),
               ],
               if (state?.progress != null) ...[
                 const SizedBox(height: 12),
@@ -121,6 +141,17 @@ class ProcessingPage extends ConsumerWidget {
                             : PlayerPage(projectId: projectId),
                       ),
                     ),
+                  ),
+                )
+              else if (!busy && _resumable.contains(status))
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: FilledButton.tonalIcon(
+                    icon: const Icon(Icons.play_arrow_outlined),
+                    label: const Text('继续处理'),
+                    onPressed: () => ref
+                        .read(pipelineControllerProvider.notifier)
+                        .retry(projectId),
                   ),
                 ),
             ],

@@ -33,14 +33,16 @@ void main() {
     tmp.deleteSync(recursive: true);
   });
 
-  testWidgets('① 本地 ASR 真识别（sherpa-onnx + TTS 中文语音）', (tester) async {
+  testWidgets('① 本地 ASR 真识别（sherpa-onnx + TTS 中文语音，后台 isolate）',
+      (tester) async {
     // 真实下载的模型目录（tool/download-sherpa-model.sh 产物）
     final modelDir = Directory('models/asr').absolute.path;
     expect(LocalAsrClient(modelDir: modelDir).isReady, isTrue,
         reason: '请先运行 tool/download-sherpa-model.sh');
-    final client = LocalAsrClient(modelDir: modelDir);
     final wav = File('integration_test/assets/tts_zh.wav').absolute.path;
-    final norm = await client.recognize(wav);
+    // 走正式调用路径（后台 isolate），验证 isolate 内 FFI 绑定初始化可用
+    final norm = await LocalAsrClient.recognizeInBackground(
+        modelDir: modelDir, audioPath: wav);
 
     final text = norm.sentences.map((s) => s.text).join('/');
     // ignore: avoid_print

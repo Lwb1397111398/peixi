@@ -341,4 +341,45 @@ void main() {
     expect(saved.ossKey, isNotNull);
     expect(asrAdapter.requests, isNotEmpty);
   });
+
+  test('取消：ASR 轮询中请求取消不置 FAILED，继续处理可完成', () async {
+    final id = await createProject();
+    final pending =
+        '{"output":{"task_id":"t-1","task_status":"PENDING"}}';
+    final (engine, ossAdapter, asrAdapter) = makeEngine([
+      (200, ''), // PUT 音频
+      (200, ''), // DELETE 对象（取消后不应执行）
+    ], [
+      (200, pending), // 提交
+      for (var i = 0; i < 60; i++) (200, pending), // 轮询（留足时间窗口）
+    ]);
+
+    final events = <PipelineEvent>[];
+    final sub = engine.events.listen(events.add);
+    final runFuture = engine.run(id);
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    engine.requestCancel(id); // 轮询循环内命中标记
+    await runFuture;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await sub.cancel();
+
+    var p = await reload(id);
+    expect(p.status, ProjectStatus.uploaded.db, reason: '取消保持当前落盘状态');
+    expect(p.failedStage, isNull);
+    expect(events.any((e) => e.cancelled), isTrue);
+    final deletes = ossAdapter.requests.where((r) => r.method == 'DELETE');
+    expect(deletes, isEmpty, reason: '取消时不应走到删除 OSS 对象');
+
+    // 继续处理：凭 asr_task_id 续轮询至完成
+    asrAdapter.script.addAll([
+      (200,
+          '{"output":{"task_id":"t-1","task_status":"SUCCEEDED","transcription_url":"https://res/2.json"}}'),
+      (200, asrResultJson),
+    ]);
+    await engine.run(id);
+    p = await reload(id);
+    expect(p.status, ProjectStatus.waitCalibration.db);
+    expect(ossAdapter.requests.where((r) => r.method == 'PUT'), hasLength(1),
+        reason: '续跑不重复上传');
+  });
 }

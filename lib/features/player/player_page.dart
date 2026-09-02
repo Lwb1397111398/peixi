@@ -41,6 +41,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _paused = false;
   bool _panelCollapsed = false;
   final Set<int> _seenCardIds = {};
+  double _playbackRate = 1.0;
 
   Question? _activeQuiz;
   StreamSubscription<Duration>? _posSub;
@@ -61,7 +62,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           ..where((t) => t.projectId.equals(widget.projectId))
           ..orderBy([(t) => OrderingTerm.asc(t.idx)]))
         .get();
-    final commentaries = await db.select(db.commentaries).get();
+    // 只取本项目场景的解说（scene_id 有唯一索引，全表加载会随项目数变慢）
+    final commentaries = scenes.isEmpty
+        ? const <Commentary>[]
+        : await (db.select(db.commentaries)
+              ..where((t) => t.sceneId
+                  .isIn([for (final s in scenes) s.id])))
+            .get();
     final questions = await (db.select(db.questions)
           ..where((t) => t.projectId.equals(widget.projectId)))
         .get();
@@ -90,6 +97,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     setState(() {
       _project = p;
       _scenes = scenes;
+      _playbackRate = prefs.playbackRate;
       for (final c in commentaries) {
         _commentaryByScene[c.sceneId] = c;
       }
@@ -107,6 +115,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     });
 
     await _player.open(Media(p.sourcePath), play: false);
+    await _player.setRate(_playbackRate);
     _posSub = _player.stream.position.listen(_onPosition);
     _playingSub = _player.stream.playing.listen((playing) {
       if (!mounted) return;
@@ -145,6 +154,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           userAnswer: answer,
           skipped: Value(skipped),
         ));
+  }
+
+  Future<void> _saveRate(double r) async {
+    final repo = ref.read(settingsRepoProvider);
+    final prefs = await repo.loadPlayPrefs();
+    await repo.savePlayPrefs(prefs.copyWith(playbackRate: r));
   }
 
   List<String> _perspectivesOf(Question q) {
@@ -221,6 +236,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       appBar: AppBar(
         title: Text('${_project!.title} · 观看'),
         actions: [
+          PopupMenuButton<double>(
+            tooltip: '播放倍速',
+            icon: const Icon(Icons.speed_outlined),
+            initialValue: _playbackRate,
+            onSelected: (r) {
+              setState(() => _playbackRate = r);
+              _player.setRate(r);
+              _saveRate(r);
+            },
+            itemBuilder: (_) => [
+              for (final r in [0.75, 1.0, 1.25, 1.5, 2.0])
+                PopupMenuItem(value: r, child: Text('${r}x')),
+            ],
+          ),
           if (MediaQuery.of(context).size.width >= 900)
             IconButton(
               icon: const Icon(Icons.view_sidebar_outlined),

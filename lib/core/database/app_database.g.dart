@@ -5387,6 +5387,46 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AnnotationsTable annotations = $AnnotationsTable(this);
   late final $SettingsTable settings = $SettingsTable(this);
   late final $LlmLogsTable llmLogs = $LlmLogsTable(this);
+  late final Index idxCharactersProject = Index(
+    'idx_characters_project',
+    'CREATE INDEX idx_characters_project ON characters (project_id)',
+  );
+  late final Index idxSegmentsProject = Index(
+    'idx_segments_project',
+    'CREATE INDEX idx_segments_project ON segments (project_id)',
+  );
+  late final Index idxScenesProject = Index(
+    'idx_scenes_project',
+    'CREATE INDEX idx_scenes_project ON scenes (project_id)',
+  );
+  late final Index idxQuestionsProject = Index(
+    'idx_questions_project',
+    'CREATE INDEX idx_questions_project ON questions (project_id)',
+  );
+  late final Index idxQuestionsScene = Index(
+    'idx_questions_scene',
+    'CREATE INDEX idx_questions_scene ON questions (scene_id)',
+  );
+  late final Index idxQaRecordsQuestion = Index(
+    'idx_qa_records_question',
+    'CREATE INDEX idx_qa_records_question ON qa_records (question_id)',
+  );
+  late final Index idxChaptersProject = Index(
+    'idx_chapters_project',
+    'CREATE INDEX idx_chapters_project ON chapters (project_id)',
+  );
+  late final Index idxParagraphsProject = Index(
+    'idx_paragraphs_project',
+    'CREATE INDEX idx_paragraphs_project ON paragraphs (project_id)',
+  );
+  late final Index idxParagraphsChapter = Index(
+    'idx_paragraphs_chapter',
+    'CREATE INDEX idx_paragraphs_chapter ON paragraphs (chapter_id)',
+  );
+  late final Index idxAnnotationsPara = Index(
+    'idx_annotations_para',
+    'CREATE INDEX idx_annotations_para ON annotations (para_id)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -5405,6 +5445,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     annotations,
     settings,
     llmLogs,
+    idxCharactersProject,
+    idxSegmentsProject,
+    idxScenesProject,
+    idxQuestionsProject,
+    idxQuestionsScene,
+    idxQaRecordsQuestion,
+    idxChaptersProject,
+    idxParagraphsProject,
+    idxParagraphsChapter,
+    idxAnnotationsPara,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([

@@ -215,12 +215,20 @@ class _ProjectCard extends ConsumerWidget {
                       ?.copyWith(color: Colors.grey.shade400)),
               const SizedBox(height: 6),
               if (state?.busy == true && state?.progress != null)
-                LinearProgressIndicator(
-                    value: state!.progress,
-                    minHeight: 6,
-                    borderRadius: BorderRadius.circular(3))
+                Row(children: [
+                  Expanded(
+                    child: LinearProgressIndicator(
+                        value: state!.progress,
+                        minHeight: 6,
+                        borderRadius: BorderRadius.circular(3)),
+                  ),
+                  _cancelTap(context, ref),
+                ])
               else if (state?.busy == true)
-                const LinearProgressIndicator(minHeight: 6)
+                Row(children: [
+                  const Expanded(child: LinearProgressIndicator(minHeight: 6)),
+                  _cancelTap(context, ref),
+                ])
               else
                 Container(
                   padding:
@@ -255,6 +263,22 @@ class _ProjectCard extends ConsumerWidget {
     if (m == null) return null;
     final ep = RegExp(r'"episode":(\d+)').firstMatch(m)?.group(1);
     return ep == null ? null : ' · 第$ep集';
+  }
+
+  /// 卡片右上角紧凑取消入口（与进度条同排，避免撑破卡片高度）
+  Widget _cancelTap(BuildContext context, WidgetRef ref) {
+    return Tooltip(
+      message: '取消处理',
+      child: GestureDetector(
+        onTap: () => ref
+            .read(pipelineControllerProvider.notifier)
+            .cancel(project.id),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: Icon(Icons.close, size: 16, color: Colors.grey.shade500),
+        ),
+      ),
+    );
   }
 
   Future<void> _open(BuildContext context, WidgetRef ref) async {

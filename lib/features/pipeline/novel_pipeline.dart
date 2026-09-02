@@ -23,6 +23,15 @@ class NovelPipelineEngine {
       StreamController<PipelineEvent>.broadcast();
   Stream<PipelineEvent> get events => _events.stream;
   final Set<int> _busy = {};
+  final Set<int> _cancelRequested = {};
+
+  /// 请求取消（仅当项目正在运行时登记）。协作式：循环检查标记后抛
+  /// [PipelineCancelled]，已完成的章/块已落库，续跑可无损恢复。
+  void requestCancel(int projectId) {
+    if (_busy.contains(projectId)) _cancelRequested.add(projectId);
+  }
+
+  bool isCancelled(int projectId) => _cancelRequested.contains(projectId);
 
   Future<void> Function(int projectId)? _extractCastFn;
   Future<void> Function(int projectId)? _annotateFn;
@@ -37,9 +46,13 @@ class NovelPipelineEngine {
   }
 
   void _emit(int projectId, String stage, ProjectStatus status,
-      {String? detail}) {
+      {String? detail, bool cancelled = false}) {
     _events.add(PipelineEvent(
-        projectId: projectId, stage: stage, status: status, detail: detail));
+        projectId: projectId,
+        stage: stage,
+        status: status,
+        detail: detail,
+        cancelled: cancelled));
   }
 
   Future<Project> _project(int id) async {
@@ -63,12 +76,26 @@ class NovelPipelineEngine {
     _emit(id, name, ProjectStatus.fromDb(p.status));
     try {
       await step(id);
+      if (_cancelRequested.remove(id)) {
+        await _emitCancelled(id, name);
+        return false;
+      }
       return true;
     } catch (e) {
+      if (_cancelRequested.remove(id) || e is PipelineCancelled) {
+        await _emitCancelled(id, name);
+        return false;
+      }
       await _setStatus(id, ProjectStatus.failed, failedStage: name);
       _emit(id, name, ProjectStatus.failed, detail: '$e');
       return false;
     }
+  }
+
+  Future<void> _emitCancelled(int id, String name) async {
+    final p = await _project(id);
+    _emit(id, name, ProjectStatus.fromDb(p.status),
+        detail: '已取消（进度已保存，可继续）', cancelled: true);
   }
 
   Future<void> run(int projectId) async {
@@ -117,6 +144,7 @@ class NovelCharacterExtractor {
     required LlmService llm,
     this.maxChapterChars = 6000,
     this.onProgress,
+    this.isCancelled,
   })  : _db = db,
         _llm = llm;
 
@@ -126,6 +154,9 @@ class NovelCharacterExtractor {
   /// 超长章节截断送审（人物提取不需要逐字读完）
   final int maxChapterChars;
   final void Function(int done, int total)? onProgress;
+
+  /// 返回 true 时抛 [PipelineCancelled] 中断循环（已完成章节已落库，可续跑）
+  final bool Function()? isCancelled;
 
   Future<void> extract(int projectId) async {
     final chapters = await (_db.select(_db.chapters)
@@ -145,6 +176,7 @@ class NovelCharacterExtractor {
 
     var done = 0;
     for (final ch in chapters) {
+      if (isCancelled?.call() ?? false) throw const PipelineCancelled();
       if (ch.summary != null && ch.summary!.isNotEmpty) {
         done++; // 续跑：本章已处理
         continue;

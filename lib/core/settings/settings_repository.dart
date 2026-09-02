@@ -25,6 +25,7 @@ class SettingsRepository {
   static const _kMinGap = 'play.min_gap_minutes';
   static const _kTriggerRatio = 'play.trigger_ratio';
   static const _kKeepTempAudio = 'play.keep_temp_audio';
+  static const _kPlaybackRate = 'play.playback_rate';
   // 阅读偏好键
   static const _kReaderFontSize = 'reader.font_size';
   static const _kReaderLineHeight = 'reader.line_height';
@@ -83,6 +84,8 @@ class SettingsRepository {
         minGapMinutes: int.tryParse(await _get(_kMinGap) ?? '') ?? 4,
         triggerRatio: double.tryParse(await _get(_kTriggerRatio) ?? '') ?? 0.3,
         keepTempAudio: (await _get(_kKeepTempAudio) ?? '1') == '1',
+        playbackRate:
+            double.tryParse(await _get(_kPlaybackRate) ?? '') ?? 1.0,
       );
 
   Future<void> savePlayPrefs(PlayPrefs p) async {
@@ -91,6 +94,7 @@ class SettingsRepository {
     await _set(_kMinGap, p.minGapMinutes.toString());
     await _set(_kTriggerRatio, p.triggerRatio.toString());
     await _set(_kKeepTempAudio, p.keepTempAudio ? '1' : '0');
+    await _set(_kPlaybackRate, p.playbackRate.toString());
   }
 
   Future<ReaderPrefs> loadReaderPrefs() async {

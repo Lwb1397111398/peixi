@@ -55,12 +55,14 @@ class PlayPrefs {
     this.minGapMinutes = 4,
     this.triggerRatio = 0.3,
     this.keepTempAudio = true,
+    this.playbackRate = 1.0,
   });
   final bool quizEnabled;
   final int maxPerEpisode;
   final int minGapMinutes;
   final double triggerRatio;
   final bool keepTempAudio;
+  final double playbackRate;
 
   PlayPrefs copyWith({
     bool? quizEnabled,
@@ -68,6 +70,7 @@ class PlayPrefs {
     int? minGapMinutes,
     double? triggerRatio,
     bool? keepTempAudio,
+    double? playbackRate,
   }) =>
       PlayPrefs(
         quizEnabled: quizEnabled ?? this.quizEnabled,
@@ -75,6 +78,7 @@ class PlayPrefs {
         minGapMinutes: minGapMinutes ?? this.minGapMinutes,
         triggerRatio: triggerRatio ?? this.triggerRatio,
         keepTempAudio: keepTempAudio ?? this.keepTempAudio,
+        playbackRate: playbackRate ?? this.playbackRate,
       );
 }
 

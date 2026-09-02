@@ -19,6 +19,7 @@ class Projects extends Table {
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+@TableIndex(name: 'idx_characters_project', columns: {#projectId})
 class Characters extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get projectId =>
@@ -31,6 +32,7 @@ class Characters extends Table {
   TextColumn get color => text().nullable()();
 }
 
+@TableIndex(name: 'idx_segments_project', columns: {#projectId})
 class Segments extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get projectId =>
@@ -43,6 +45,7 @@ class Segments extends Table {
   TextColumn get content => text().named('text')();
 }
 
+@TableIndex(name: 'idx_scenes_project', columns: {#projectId})
 class Scenes extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get projectId =>
@@ -84,6 +87,8 @@ class KnowledgeCards extends Table {
       ];
 }
 
+@TableIndex(name: 'idx_questions_project', columns: {#projectId})
+@TableIndex(name: 'idx_questions_scene', columns: {#sceneId})
 class Questions extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get projectId =>
@@ -93,6 +98,7 @@ class Questions extends Table {
   TextColumn get perspectivesJson => text().withDefault(const Constant('[]'))();
 }
 
+@TableIndex(name: 'idx_qa_records_question', columns: {#questionId})
 class QaRecords extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get questionId =>
@@ -102,6 +108,7 @@ class QaRecords extends Table {
   BoolColumn get skipped => boolean().withDefault(const Constant(false))();
 }
 
+@TableIndex(name: 'idx_chapters_project', columns: {#projectId})
 class Chapters extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get projectId =>
@@ -113,6 +120,8 @@ class Chapters extends Table {
   TextColumn get summary => text().nullable()();
 }
 
+@TableIndex(name: 'idx_paragraphs_project', columns: {#projectId})
+@TableIndex(name: 'idx_paragraphs_chapter', columns: {#chapterId})
 class Paragraphs extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get projectId =>
@@ -122,6 +131,7 @@ class Paragraphs extends Table {
   TextColumn get content => text().named('text')();
 }
 
+@TableIndex(name: 'idx_annotations_para', columns: {#paraId})
 class Annotations extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get paraId =>
@@ -166,10 +176,18 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            // v1→v2：为按项目/章节/段落/场景等外键式查询补齐索引（v1 为全表扫描）
+            for (final index in allSchemaEntities.whereType<Index>()) {
+              await m.createIndex(index);
+            }
+          }
+        },
         beforeOpen: (details) async {
           // SQLite 默认不启用外键约束，级联删除依赖此 PRAGMA
           await customStatement('PRAGMA foreign_keys = ON');
