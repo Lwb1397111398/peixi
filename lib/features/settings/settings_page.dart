@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
+import 'package:peixi/core/oss/oss_client.dart';
 import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/providers.dart';
 
@@ -19,6 +22,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   final _apiKey = TextEditingController();
   final _modelCheap = TextEditingController();
   final _modelStandard = TextEditingController();
+  final _modelVision = TextEditingController();
   final _ossBucket = TextEditingController();
   final _ossEndpoint = TextEditingController();
   final _ossAk = TextEditingController();
@@ -26,6 +30,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   String _preset = '阿里云百炼';
   int _totalTokens = 0;
   bool _testing = false;
+  bool _testingOss = false;
   bool _loaded = false;
   AsrMode _asrMode = AsrMode.cloud;
   String? _localModelDir;
@@ -46,6 +51,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     _apiKey.text = cfg.apiKey;
     _modelCheap.text = cfg.modelCheap;
     _modelStandard.text = cfg.modelStandard;
+    _modelVision.text = cfg.modelVision;
     _preset = cfg.baseUrl == ApiConfig.bailianBaseUrl ? '阿里云百炼' : '自定义';
     final oss = await repo.loadOssConfig();
     if (oss != null) {
@@ -109,6 +115,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _apiKey,
       _modelCheap,
       _modelStandard,
+      _modelVision,
       _ossBucket,
       _ossEndpoint,
       _ossAk,
@@ -168,6 +175,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   suffixText: 'standard',
                 ),
               ),
+              TextFormField(
+                controller: _modelVision,
+                decoration: const InputDecoration(
+                  labelText: '视觉模型（实验性校准辅助）',
+                  suffixText: 'vision',
+                ),
+              ),
               const SizedBox(height: 8),
               FilledButton.icon(
                 onPressed: _testing ? null : _testConnection,
@@ -205,6 +219,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 controller: _ossSk,
                 obscureText: true,
                 decoration: const InputDecoration(labelText: 'AccessKeySecret'),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: _testingOss ? null : _testOss,
+                icon: _testingOss
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_upload_outlined),
+                label: Text(_testingOss ? '测试中…' : '测试 OSS 连接'),
               ),
               const Divider(height: 32),
               Text('语音识别（ASR）', style: Theme.of(context).textTheme.titleMedium),
@@ -340,6 +366,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               apiKey: _apiKey.text.trim(),
               modelCheap: _modelCheap.text.trim(),
               modelStandard: _modelStandard.text.trim(),
+              modelVision: _modelVision.text.trim(),
             ),
           );
       final msg = await ref.read(llmServiceProvider).testConnection();
@@ -351,6 +378,32 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  /// OSS 连通性测试：PUT 一个小测试对象再删除（用表单当前值，未保存也能测）。
+  Future<void> _testOss() async {
+    setState(() => _testingOss = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final oss = OssClient(ref.read(dioProvider),
+          OssConfig(
+            bucket: _ossBucket.text.trim(),
+            endpoint: _ossEndpoint.text.trim(),
+            accessKeyId: _ossAk.text.trim(),
+            accessKeySecret: _ossSk.text.trim(),
+          ));
+      const key = 'peixi/test/connection-test.txt';
+      await oss.putBytes(
+          utf8.encode('peixi 连接测试 ${DateTime.now().toIso8601String()}'),
+          key,
+          contentType: 'text/plain');
+      await oss.deleteObject(key);
+      messenger.showSnackBar(const SnackBar(content: Text('✅ OSS 连接正常')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('❌ $e')));
+    } finally {
+      if (mounted) setState(() => _testingOss = false);
+    }
+  }
+
   Future<void> _save() async {
     final repo = ref.read(settingsRepoProvider);
     await repo.saveApiConfig(
@@ -359,6 +412,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         apiKey: _apiKey.text.trim(),
         modelCheap: _modelCheap.text.trim(),
         modelStandard: _modelStandard.text.trim(),
+        modelVision: _modelVision.text.trim(),
       ),
     );
     await repo.saveOssConfig(

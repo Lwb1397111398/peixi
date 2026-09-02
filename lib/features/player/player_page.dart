@@ -187,7 +187,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         durationMs: _durationMs,
         boundariesMs: quiz?.boundaryPoints() ?? const <int>[],
         quizMarkerMs: [for (final m in quiz?.markerPoints() ?? const []) m.posMs],
-        onSeek: (ms) => _player.seek(Duration(milliseconds: ms)),
+        onSeek: (ms) {
+          _quizEngine?.notifySeek(ms);
+          _player.seek(Duration(milliseconds: ms));
+        },
       ),
     ]);
 

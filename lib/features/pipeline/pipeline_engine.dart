@@ -126,14 +126,18 @@ class PipelineEngine {
         st = ProjectStatus.audioReady;
       }
       final asrMode = await _settings.loadAsrMode();
+      final meta = ProjectMeta.fromJson(p.metaJson);
       if (asrMode == AsrMode.local) {
-        // 本地识别：无需 OSS 中转与任务轮询
-        if (st == ProjectStatus.audioReady) {
+        // 'asr' 失败重试的统一入口状态是 UPLOADED（entryStatusOfStage），
+        // 本地模式没有上传阶段，须同样接受 UPLOADED，否则重试会空转
+        if (st == ProjectStatus.audioReady || st == ProjectStatus.uploaded) {
           if (!await _stage(projectId, 'asr', _runAsrTask)) return;
           st = ProjectStatus.asrDone;
         }
       } else {
-        if (st == ProjectStatus.audioReady) {
+        if (st == ProjectStatus.audioReady ||
+            (st == ProjectStatus.uploaded && meta.ossKey == null)) {
+          // UPLOADED 但从未上传成功（如云端识别失败后切到云端重试）：补上传
           if (!await _stage(projectId, 'upload', _uploadOss)) return;
           st = ProjectStatus.uploaded;
         }

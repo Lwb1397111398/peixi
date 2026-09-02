@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart' show OrderingTerm, Value;
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/features/pipeline/project_meta.dart';
 
 /// 阅读器数据层：章节/段落/批注/人物加载，L4 作答落库（设计稿 8.4）。
 class ReaderRepository {
@@ -22,6 +23,30 @@ class ReaderRepository {
         ..where((t) => t.projectId.equals(projectId))
         ..orderBy([(c) => OrderingTerm.asc(c.id)]))
       .get();
+
+  /// 上次阅读位置（存 projects.meta_json.reading）；无记录返回 null。
+  Future<ReadingProgress?> readingProgress(int projectId) async {
+    final row = await (db.select(db.projects)
+          ..where((t) => t.id.equals(projectId)))
+        .getSingleOrNull();
+    if (row == null) return null;
+    return ProjectMeta.fromJson(row.metaJson).readingProgress;
+  }
+
+  Future<void> saveReadingProgress(
+      int projectId,
+      {required int chapterIdx,
+      required double scrollOffset}) async {
+    final row = await (db.select(db.projects)
+          ..where((t) => t.id.equals(projectId)))
+        .getSingleOrNull();
+    if (row == null) return;
+    final meta = ProjectMeta.fromJson(row.metaJson)
+      ..readingProgress = ReadingProgress(
+          chapterIdx: chapterIdx, scrollOffset: scrollOffset);
+    await (db.update(db.projects)..where((t) => t.id.equals(projectId)))
+        .write(ProjectsCompanion(metaJson: Value(meta.encode())));
+  }
 
   /// 批注按 paraId 分组（一段可有多类型批注）
   Future<Map<int, List<Annotation>>> annotationsByParaId(

@@ -11,6 +11,7 @@ import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
 import 'package:peixi/core/novel/epub_parser.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
+import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/providers.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
@@ -126,6 +127,8 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
                   ProjectStatus.audioReady.db,
                   ProjectStatus.uploaded.db,
                   ProjectStatus.asrDone.db,
+                  ProjectStatus.mapped.db,
+                  ProjectStatus.calibrated.db,
                   ProjectStatus.segmented.db,
                   ProjectStatus.commentaryDone.db,
                 ]),
@@ -182,8 +185,25 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     WakelockPlus.toggle(enable: anyBusy);
   }
 
+  /// 导入前的配置校验：避免选完文件、抽完音频才在 upload/asr 阶段失败。
+  /// 返回 null 表示通过。
+  Future<String?> _precheck({bool needOss = false}) async {
+    final repo = ref.read(settingsRepoProvider);
+    final api = await repo.loadApiConfig();
+    if (!api.isComplete) return '尚未配置 LLM API Key，请先到设置页配置';
+    if (needOss && await repo.loadAsrMode() == AsrMode.cloud) {
+      final oss = await repo.loadOssConfig();
+      if (oss == null || !oss.isComplete) {
+        return '云端识别需先在设置页配置 OSS 中转桶，或切换为本地识别模式';
+      }
+    }
+    return null;
+  }
+
   /// S1 导入：选文件（Android 复制进应用目录）→ 探测 → 建 project → 开跑。
   Future<ImportResult> importVideo() async {
+    final cfgErr = await _precheck(needOss: true);
+    if (cfgErr != null) return ImportResult(error: cfgErr);
     final picked = await FilePicker.pickFiles(type: FileType.video);
     if (picked.isEmpty) return const ImportResult();
     final path = picked.single.path;
@@ -232,6 +252,8 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
 
   /// N1 小说导入：选 txt/epub → 编码检测/切章 → 一个事务入库 → 开跑 N2。
   Future<ImportResult> importNovel() async {
+    final cfgErr = await _precheck();
+    if (cfgErr != null) return ImportResult(error: cfgErr);
     final picked = await FilePicker.pickFiles(
         type: FileType.custom, allowedExtensions: ['txt', 'epub']);
     if (picked.isEmpty) return const ImportResult();
@@ -275,8 +297,19 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
   }
 
   Future<void> retry(int projectId) async {
-    final e = await engine();
-    unawaitedGuard(() => e.retry(projectId));
+    // 视频/小说状态机互不兼容，必须按 type 分流到各自引擎
+    final db = ref.read(databaseProvider);
+    final p = await (db.select(db.projects)
+          ..where((t) => t.id.equals(projectId)))
+        .getSingleOrNull();
+    if (p == null) return;
+    if (p.type == 'novel') {
+      final e = await novelEngine();
+      unawaitedGuard(() => e.retry(projectId));
+    } else {
+      final e = await engine();
+      unawaitedGuard(() => e.retry(projectId));
+    }
   }
 
   Future<void> confirmCalibration(
@@ -294,8 +327,10 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     if (p != null) {
       final meta = ProjectMeta.fromJson(p.metaJson);
       final dir = await audioDir();
+      // $id.wav 是本地模式从 mp3/m4a 缓存补转的副本，不在 audioPath() 命名内
       for (final f in [
         File(meta.audioPath(dir.path, projectId)),
+        File('${dir.path}/$projectId.wav'),
         File('${dir.path}/$projectId.srt'),
       ]) {
         if (f.existsSync()) f.deleteSync();

@@ -92,6 +92,14 @@ class LibraryPage extends ConsumerWidget {
               if (res.error != null) {
                 ScaffoldMessenger.of(context)
                     .showSnackBar(SnackBar(content: Text(res.error!)));
+              } else if (res.projectId != null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('视频已导入，开始处理…')));
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            ProcessingPage(projectId: res.projectId!)));
               }
             },
           ),
@@ -111,6 +119,11 @@ class LibraryPage extends ConsumerWidget {
               } else if (res.projectId != null) {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                     content: Text('小说已导入，正在提取人物与生成批注…')));
+                await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            ProcessingPage(projectId: res.projectId!)));
               }
             },
           ),
@@ -341,11 +354,14 @@ class _ProjectCard extends ConsumerWidget {
   }
 
   void _confirmDelete(BuildContext context, WidgetRef ref) {
+    final copyWarning = Platform.isAndroid
+        ? '\n导入时复制进应用的源文件副本也将一并删除。'
+        : '';
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('删除「${project.title}」？'),
-        content: const Text('解说、卡片、问答记录将一并删除，且不可恢复。'),
+        content: Text('解说、卡片、问答记录将一并删除，且不可恢复。$copyWarning'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(

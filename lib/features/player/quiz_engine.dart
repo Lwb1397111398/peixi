@@ -55,9 +55,32 @@ class QuizEngine {
   final PlayPrefs prefs;
   final List<QuizScene> scenes;
   final Set<int> _fired = {};
+  int? _lastPosMs;
 
   int get askedCount => _fired.length;
   int? lastAskPosMs;
+
+  /// 单次位置事件的自然步长上限；超过即视为 seek（键盘快进等不经 onSeek 的路径）。
+  static const _maxNaturalStepMs = 3000;
+
+  double _triggerAtMs(QuizScene sc) =>
+      sc.startMs + (sc.endMs - sc.startMs) * prefs.triggerRatio;
+
+  /// 用户拖动/跳转（onSeek 通知）：落点若已越过所在场景的触发点，
+  /// 本题按已触发处理（跳过即视为放弃）。逐帧拖动会产生多次小步 seek，
+  /// 步长启发式覆盖不到，必须由 UI 显式通知。
+  void notifySeek(int toMs) {
+    final i = sceneAt(scenes, toMs);
+    if (i >= 0) {
+      final sc = scenes[i];
+      if (sc.quizCandidate &&
+          !_fired.contains(sc.sceneId) &&
+          toMs >= _triggerAtMs(sc)) {
+        _fired.add(sc.sceneId);
+      }
+    }
+    _lastPosMs = toMs;
+  }
 
   /// 播放位置推进时调用；返回应触发的提问（无则 null）。
   QuizTrigger? shouldTrigger(int posMs) {
@@ -66,9 +89,20 @@ class QuizEngine {
     final i = sceneAt(scenes, posMs);
     if (i < 0) return null;
     final sc = scenes[i];
+    final last = _lastPosMs;
+    _lastPosMs = posMs;
+    if (last != null && (posMs < last - 1500 || posMs - last > _maxNaturalStepMs)) {
+      // 落点越过触发点的 seek：放弃该题，也不在落点立即弹题
+      if (sc.quizCandidate &&
+          !_fired.contains(sc.sceneId) &&
+          posMs >= _triggerAtMs(sc)) {
+        _fired.add(sc.sceneId);
+      }
+      return null;
+    }
     if (!sc.quizCandidate || _fired.contains(sc.sceneId)) return null;
 
-    final at = sc.startMs + (sc.endMs - sc.startMs) * prefs.triggerRatio;
+    final at = _triggerAtMs(sc);
     if (posMs < at) return null;
     if (lastAskPosMs != null &&
         posMs - lastAskPosMs! < prefs.minGapMinutes * 60000) {

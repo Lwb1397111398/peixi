@@ -271,4 +271,74 @@ void main() {
     expect(segs.single.content, '本地识别文本');
     expect(segs.single.speakerCharId, isNull); // 映射阶段尚未执行
   });
+
+  test('本地 ASR 失败后重试可恢复（UPLOADED 入口不再空转）', () async {
+    await settings.saveAsrMode(AsrMode.local);
+    final id = await createProject();
+    var calls = 0;
+    PipelineEngine makeEngine() => PipelineEngine(
+        db: db,
+        ffmpeg: FakeFFmpegService(durationMs: 2700000),
+        asr: AsrClient(Dio()),
+        settings: settings,
+        audioDir: audioDir,
+        pollInterval: const Duration(milliseconds: 10),
+        localAsr: (audioPath) async {
+          calls++;
+          if (calls == 1) throw PipelineException('本地模型未加载');
+          return const NormalizedAsr(durationMs: 1500, sentences: [
+            AsrSentence(
+                beginMs: 0,
+                endMs: 1500,
+                text: '重试成功文本',
+                speakerId: 'SPEAKER_00'),
+          ]);
+        });
+
+    await makeEngine().run(id);
+    var p = await reload(id);
+    expect(p.status, ProjectStatus.failed.db);
+    expect(p.failedStage, 'asr');
+
+    await makeEngine().retry(id);
+    p = await reload(id);
+    expect(p.status, ProjectStatus.waitCalibration.db,
+        reason: '重试应走完 asr→map 到校准闸门，而不是停留在 FAILED');
+    expect(calls, 2);
+    final segs = await db.select(db.segments).get();
+    expect(segs.single.content, '重试成功文本');
+  });
+
+  test('云端 UPLOADED 但从未上传成功：重试先补上传再识别', () async {
+    final id = await createProject();
+    // 人为构造"已到 UPLOADED 但 meta 无 ossKey"的状态（如切换识别模式后的失败残留）
+    final meta = ProjectMeta.fromJson((await reload(id)).metaJson)
+      ..audioFormat = 'mp3';
+    await (db.update(db.projects)..where((t) => t.id.equals(id))).write(
+        ProjectsCompanion(
+            status: Value(ProjectStatus.uploaded.db),
+            metaJson: Value(meta.encode())));
+    File('${audioDir.path}/$id.mp3').writeAsBytesSync(List.filled(64, 0));
+
+    final (engine, ossAdapter, asrAdapter) = makeEngine([
+      (200, ''), // PUT 音频（补上传）
+      (200, ''), // DELETE 对象
+    ], [
+      (200, '{"output":{"task_id":"t-9","task_status":"PENDING"}}'),
+      (200,
+          '{"output":{"task_id":"t-9","task_status":"SUCCEEDED","transcription_url":"https://res/9.json"}}'),
+      (200, asrResultJson),
+    ]);
+    await engine.retry(id);
+
+    final p = await reload(id);
+    expect(p.status, ProjectStatus.waitCalibration.db);
+    expect(
+        ossAdapter.requests.where((r) => r.method == 'PUT'),
+        hasLength(1),
+        reason: '缺 ossKey 时必须补上传，否则 asr 阶段报缺对象键死循环');
+    final saved = ProjectMeta.fromJson(p.metaJson);
+    expect(saved.ossKey, isNotNull);
+    expect(asrAdapter.requests, isNotEmpty);
+  });
 }

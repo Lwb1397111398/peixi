@@ -115,30 +115,47 @@ class FFmpegKitService implements FFmpegService {
     }
     final totalMs = await _durationOf(input);
     final done = Completer<void>();
-    final args =
-        '-y -i "$input" -vn -ac 1 -ar 16000 ${codecArgs.join(' ')} "$output"';
-    await FFmpegKit.executeAsync(
-      args,
-      (s) {
-        s.getReturnCode().then((code) {
-          if (done.isCompleted) return;
-          if (code != null && ReturnCode.isSuccess(code)) {
-            done.complete();
-          } else {
-            done.completeError(
-                Exception('音频抽取失败 rc=${code?.getValue()}'));
-          }
-        });
-      },
-      null,
-      (onProgress != null && totalMs > 0)
-          ? (stats) {
-              final t = stats.getTime();
-              if (t > 0) onProgress((t / totalMs).clamp(0.0, 1.0));
+    // 先写 .part 临时文件、成功后改名：中途被杀/失败只留 .part，
+    // 不会让下游 existsSync() 把半截音频当成完整缓存。
+    // .part 不是已知容器后缀，必须用 -f 显式指定封装格式
+    final format = switch (ext) {
+      'mp3' => 'mp3',
+      'm4a' => 'ipod', // aac 的 m4a 封装 muxer 名
+      _ => 'wav',
+    };
+    final part = '$output.part';
+    try {
+      final args =
+          '-y -i "$input" -vn -ac 1 -ar 16000 ${codecArgs.join(' ')} '
+          '-f $format "$part"';
+      await FFmpegKit.executeAsync(
+        args,
+        (s) {
+          s.getReturnCode().then((code) {
+            if (done.isCompleted) return;
+            if (code != null && ReturnCode.isSuccess(code)) {
+              done.complete();
+            } else {
+              done.completeError(
+                  Exception('音频抽取失败 rc=${code?.getValue()}'));
             }
-          : null,
-    );
-    return done.future;
+          });
+        },
+        null,
+        (onProgress != null && totalMs > 0)
+            ? (stats) {
+                final t = stats.getTime();
+                if (t > 0) onProgress((t / totalMs).clamp(0.0, 1.0));
+              }
+            : null,
+      );
+      await done.future;
+      await File(part).rename(output);
+    } catch (e) {
+      final f = File(part);
+      if (f.existsSync()) f.deleteSync();
+      rethrow;
+    }
   }
 
   Future<int> _durationOf(String input) async {

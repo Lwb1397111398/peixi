@@ -46,10 +46,19 @@ class OssClient {
   Future<void> putFile(File file, String key,
       {String contentType = 'audio/mpeg',
       void Function(double)? onProgress}) async {
+    final bytes = await file.readAsBytes();
+    await putBytes(bytes, key,
+        contentType: contentType,
+        onProgress: onProgress);
+  }
+
+  /// 上传内存字节（小对象：连接测试等）。
+  Future<void> putBytes(List<int> bytes, String key,
+      {String contentType = 'application/octet-stream',
+      void Function(double)? onProgress}) async {
     final date = HttpDate.format(_clock().toUtc());
     final signature = _hmacSign(_stringToSign('PUT', key,
         dateOrExpires: date, contentType: contentType));
-    final bytes = await file.readAsBytes();
     final resp = await dio.put(objectUrl(key),
         data: Stream.fromIterable([bytes]),
         options: Options(

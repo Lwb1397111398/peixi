@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
+import 'package:peixi/features/player/player_page.dart';
+import 'package:peixi/features/reader/reader_page.dart';
 import 'package:peixi/providers.dart';
 
 /// 处理详情页：阶段时间线 + 进度 + 失败重试。
@@ -11,7 +13,7 @@ class ProcessingPage extends ConsumerWidget {
   const ProcessingPage({super.key, required this.projectId});
   final int projectId;
 
-  static const _stages = [
+  static const _videoStages = [
     ('subtitle', '字幕提取（可选加速）'),
     ('audio', '音频抽取 16kHz 单声道'),
     ('upload', '上传 OSS 中转'),
@@ -20,6 +22,12 @@ class ProcessingPage extends ConsumerWidget {
     ('calibration', '人工校准'),
     ('segment', '场景切分'),
     ('commentary', '逐场景解说生成'),
+    ('finalize', '收尾'),
+  ];
+
+  static const _novelStages = [
+    ('map', '人物提取与章节摘要'),
+    ('commentary', '逐段批注生成'),
     ('finalize', '收尾'),
   ];
 
@@ -44,6 +52,8 @@ class ProcessingPage extends ConsumerWidget {
           final status = ProjectStatus.fromDb(p.status);
           final failedStage = p.failedStage;
           final busy = state?.busy ?? false;
+          final isNovel = p.type == 'novel';
+          final stages = isNovel ? _novelStages : _videoStages;
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -82,17 +92,35 @@ class ProcessingPage extends ConsumerWidget {
                         ?.copyWith(color: Colors.grey.shade400)),
               ],
               const SizedBox(height: 16),
-              ..._stages.map((s) => _stageTile(s.$1, s.$2, status, state,
-                  failedStage)),
+              ...stages.map((s) => _stageTile(s.$1, s.$2, status, state,
+                  failedStage, isNovel)),
               if (status == ProjectStatus.failed)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: FilledButton.icon(
                     icon: const Icon(Icons.refresh),
-                    label: Text('重试「${stageLabel(failedStage ?? '')}」'),
+                    label: Text('重试「${_failedStageLabel(p)}」'),
                     onPressed: () => ref
                         .read(pipelineControllerProvider.notifier)
                         .retry(projectId),
+                  ),
+                ),
+              if (status == ProjectStatus.ready && !busy)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: FilledButton.icon(
+                    icon: Icon(isNovel
+                        ? Icons.auto_stories_outlined
+                        : Icons.play_circle_fill_outlined),
+                    label: Text(isNovel ? '开始阅读' : '开始观看'),
+                    onPressed: () => Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => isNovel
+                            ? ReaderPage(projectId: projectId)
+                            : PlayerPage(projectId: projectId),
+                      ),
+                    ),
                   ),
                 ),
             ],
@@ -104,9 +132,23 @@ class ProcessingPage extends ConsumerWidget {
 
   String _subtitleText(Project p) => p.sourcePath;
 
+  String _failedStageLabel(Project p) {
+    final stage = p.failedStage ?? '';
+    if (p.type == 'novel') {
+      return switch (stage) {
+        'map' => '人物提取',
+        'commentary' => '批注生成',
+        _ => stageLabel(stage),
+      };
+    }
+    return stageLabel(stage);
+  }
+
   Widget _stageTile(String key, String label, ProjectStatus status,
-      PipelineState? state, String? failedStage) {
-    final reached = _stageReached(key, status, failedStage);
+      PipelineState? state, String? failedStage,
+      [bool isNovel = false]) {
+    final reached =
+        _stageReached(key, status, failedStage, isNovel: isNovel);
     final active = state?.busy == true && state?.stage == key;
     final failed = failedStage == key && status == ProjectStatus.failed;
     final waitingGate =
@@ -142,7 +184,8 @@ class ProcessingPage extends ConsumerWidget {
   }
 
   /// 该阶段是否已完成（按状态机位置推断）。
-  bool _stageReached(String stage, ProjectStatus status, String? failedStage) {
+  bool _stageReached(String stage, ProjectStatus status, String? failedStage,
+      {bool isNovel = false}) {
     const order = [
       ProjectStatus.imported,
       ProjectStatus.audioReady,
@@ -159,6 +202,7 @@ class ProcessingPage extends ConsumerWidget {
       'subtitle' || 'audio' => ProjectStatus.audioReady,
       'upload' => ProjectStatus.uploaded,
       'asr' => ProjectStatus.asrDone,
+      // 小说 N2 完成即 MAPPED（视频的 map 完成同样落在 MAPPED）
       'map' => ProjectStatus.mapped,
       'calibration' => ProjectStatus.calibrated,
       'segment' => ProjectStatus.segmented,
@@ -167,7 +211,9 @@ class ProcessingPage extends ConsumerWidget {
       _ => ProjectStatus.ready,
     };
     final cur = status == ProjectStatus.failed
-        ? entryStatusOfStage(failedStage ?? '')
+        ? (isNovel
+            ? novelEntryStatusOfStage(failedStage ?? '')
+            : entryStatusOfStage(failedStage ?? ''))
         : status;
     return order.indexOf(stageStatus) <= order.indexOf(cur);
   }

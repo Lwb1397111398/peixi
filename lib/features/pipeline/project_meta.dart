@@ -2,6 +2,13 @@ import 'dart:convert';
 
 import 'package:peixi/core/media/ffmpeg_service.dart';
 
+/// 阅读进度（小说项目）：章节下标 + 滚动偏移，恢复上次阅读位置。
+class ReadingProgress {
+  ReadingProgress({required this.chapterIdx, required this.scrollOffset});
+  final int chapterIdx;
+  final double scrollOffset;
+}
+
 /// projects.meta_json 的结构化读写（S1 探测结果 + 各阶段中间产物）。
 /// 规范化 ASR 结果（设计稿"核心中间产物"）存在 [asrNormalized]。
 class ProjectMeta {
@@ -17,6 +24,7 @@ class ProjectMeta {
     this.asrNormalized,
     this.digest,
     this.mediaMissing = false,
+    this.readingProgress,
   });
 
   String? sourceFilename;
@@ -32,6 +40,9 @@ class ProjectMeta {
 
   /// 项目包迁移标记：视频本体不在包内（仅解说/问答可看，重播需重新导入视频）
   bool mediaMissing;
+
+  /// 阅读进度（小说项目，设计稿 8.4 进度记忆）
+  ReadingProgress? readingProgress;
 
   String audioPath(String audioDir, int projectId) =>
       '$audioDir/$projectId.${audioFormat ?? 'mp3'}';
@@ -49,6 +60,11 @@ class ProjectMeta {
         if (asrNormalized != null) 'asrNormalized': asrNormalized,
         if (digest != null) 'digest': digest,
         if (mediaMissing) 'mediaMissing': true,
+        if (readingProgress != null)
+          'reading': {
+            'chapterIdx': readingProgress!.chapterIdx,
+            'scrollOffset': readingProgress!.scrollOffset,
+          },
       };
 
   String encode() => jsonEncode(toJson());
@@ -77,6 +93,15 @@ class ProjectMeta {
           : Map<String, dynamic>.from(j['asrNormalized'] as Map),
       digest: j['digest'] as String?,
       mediaMissing: j['mediaMissing'] == true,
+      readingProgress: j['reading'] == null
+          ? null
+          : ReadingProgress(
+              chapterIdx:
+                  ((j['reading'] as Map)['chapterIdx'] as num?)?.toInt() ?? 0,
+              scrollOffset: ((j['reading'] as Map)['scrollOffset'] as num?)
+                      ?.toDouble() ??
+                  0.0,
+            ),
     );
   }
 }

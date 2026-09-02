@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
@@ -29,6 +31,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   Map<int, List<Annotation>> _anns = {};
   bool _loading = true;
 
+  // 阅读进度记忆：恢复目标偏移（一次性）+ 抽屉"上次读到"标记
+  final _scroll = ScrollController();
+  double? _pendingScrollOffset;
+  int _lastReadingChapterIdx = -1;
+
   // L4 段间卡片状态（paraId 键）
   final _l4Controllers = <int, TextEditingController>{};
   final _l4Answered = <int, String?>{}; // null=未作答，''=跳过
@@ -55,12 +62,23 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     _prefs = await ref.read(settingsRepoProvider).loadReaderPrefs();
     _chapters = await _repo.chapters(widget.projectId);
     _cast = await _repo.cast(widget.projectId);
+    final saved = await _repo.readingProgress(widget.projectId);
+    if (saved != null &&
+        saved.chapterIdx >= 0 &&
+        saved.chapterIdx < _chapters.length) {
+      _lastReadingChapterIdx = saved.chapterIdx;
+      _pendingScrollOffset = saved.scrollOffset;
+    }
     if (!mounted) return;
     setState(() {});
-    if (_chapters.isNotEmpty) await _openChapter(0);
+    if (_chapters.isNotEmpty) {
+      await _openChapter(
+          _lastReadingChapterIdx >= 0 ? _lastReadingChapterIdx : 0,
+          restoreOffset: _pendingScrollOffset);
+    }
   }
 
-  Future<void> _openChapter(int idx) async {
+  Future<void> _openChapter(int idx, {double? restoreOffset}) async {
     setState(() => _loading = true);
     _chapterIdx = idx;
     _paragraphs = await _repo.paragraphs(_chapters[idx].id);
@@ -68,6 +86,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         await _repo.annotationsByParaId([for (final p in _paragraphs) p.id]);
     if (!mounted) return;
     setState(() => _loading = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      if (restoreOffset != null) {
+        _scroll.jumpTo(
+            restoreOffset.clamp(0.0, _scroll.position.maxScrollExtent));
+      } else if (_scroll.offset > 0) {
+        _scroll.jumpTo(0);
+      }
+      _persistProgress();
+    });
+  }
+
+  void _persistProgress() {
+    if (!_scroll.hasClients) return;
+    unawaited(_repo.saveReadingProgress(widget.projectId,
+        chapterIdx: _chapterIdx, scrollOffset: _scroll.offset));
   }
 
   Future<void> _updatePrefs(ReaderPrefs p) async {
@@ -77,6 +111,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   @override
   void dispose() {
+    _scroll.dispose();
     for (final c in _l4Controllers.values) {
       c.dispose();
     }
@@ -115,10 +150,17 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
           ? const Center(child: CircularProgressIndicator())
           : _chapters.isEmpty
               ? const Center(child: Text('本书没有章节'))
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 48),
-                  itemCount: _paragraphs.length,
-                  itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
+              : NotificationListener<ScrollEndNotification>(
+                  onNotification: (_) {
+                    _persistProgress();
+                    return false;
+                  },
+                  child: ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 48),
+                    itemCount: _paragraphs.length,
+                    itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
+                  ),
                 ),
     );
   }
@@ -131,6 +173,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
           itemBuilder: (_, i) {
             final ch = _chapters[i];
             final selected = i == _chapterIdx;
+            final isLastRead = i == _lastReadingChapterIdx;
             return ListTile(
               selected: selected,
               title: Text(
@@ -139,6 +182,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: selected ? null : fg),
               ),
+              trailing: isLastRead && !selected
+                  ? Text('上次读到',
+                      style: TextStyle(
+                          fontSize: 11, color: fg.withValues(alpha: 0.6)))
+                  : null,
               onTap: () {
                 Navigator.pop(context); // 关抽屉
                 _openChapter(i);
