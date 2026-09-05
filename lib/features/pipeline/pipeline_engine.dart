@@ -7,6 +7,7 @@ import 'package:drift/drift.dart';
 import 'package:dio/dio.dart';
 import 'package:peixi/core/asr/asr_client.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/logging/crash_log.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/oss/oss_client.dart';
 import 'package:peixi/core/settings/api_config.dart';
@@ -366,10 +367,12 @@ class PipelineEngine {
       }
 
       norm = await _asr.downloadResult(transcriptionUrl!);
-      // 识别完成即删 OSS 对象（设计稿：用后即删；失败不影响主线）
+      // 识别完成即删 OSS 对象（设计稿：用后即删）；失败留痕但不影响主线
       try {
         if (meta.ossKey != null) await oss.deleteObject(meta.ossKey!);
-      } catch (_) {}
+      } catch (e, st) {
+        CrashLog.write('oss-delete', e, st);
+      }
     }
 
     await _persistAsrResult(id, meta, norm);

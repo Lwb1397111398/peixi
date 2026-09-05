@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:peixi/app.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/logging/crash_log.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/providers.dart';
@@ -33,6 +34,8 @@ Future<void> main() async {
     final db = AppDatabase(NativeDatabase.createInBackground(
         File(p.join(dir.path, 'peixi.sqlite'))));
     final repo = SettingsRepository(db, FlutterSecureStorage());
+    // 启动清理：90 天前的 LLM 调用日志与响应缓存只占空间不再有用
+    await LlmService(db: db).pruneOldEntries();
     runApp(ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),

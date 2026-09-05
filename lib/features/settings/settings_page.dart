@@ -27,8 +27,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   final _ossEndpoint = TextEditingController();
   final _ossAk = TextEditingController();
   final _ossSk = TextEditingController();
+  final _budget = TextEditingController();
   String _preset = '阿里云百炼';
   int _totalTokens = 0;
+  int _monthTokens = 0;
   bool _testing = false;
   bool _testingOss = false;
   bool _loaded = false;
@@ -68,6 +70,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 )
                 .getSingle())
             .read<int>('t');
+    _monthTokens = await ref.read(llmServiceProvider).monthUsedTokens();
+    final budget = await repo.loadLlmBudgetTokens();
+    if (budget > 0) _budget.text = '$budget';
     _asrMode = await repo.loadAsrMode();
     await _refreshLocalModel();
     _playPrefs = await repo.loadPlayPrefs();
@@ -120,6 +125,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _ossEndpoint,
       _ossAk,
       _ossSk,
+      _budget,
     ]) {
       c.dispose();
     }
@@ -180,6 +186,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 decoration: const InputDecoration(
                   labelText: '视觉模型（实验性校准辅助）',
                   suffixText: 'vision',
+                ),
+              ),
+              TextFormField(
+                controller: _budget,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '月度 token 预算',
+                  hintText: '留空表示不限；达到上限后管线暂停并提示',
                 ),
               ),
               const SizedBox(height: 8),
@@ -339,8 +353,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 children: [
                   const Icon(Icons.paid_outlined, size: 18),
                   const SizedBox(width: 8),
-                  Text('本项目累计 LLM 消耗：$_totalTokens tokens'),
+                  Expanded(
+                    child: Text(
+                        '累计 LLM 消耗：$_totalTokens tokens'
+                        '（本月 $_monthTokens）'),
+                  ),
                 ],
+              ),
+              TextButton.icon(
+                onPressed: _clearLlmStats,
+                icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                label: const Text('清空调用统计与响应缓存'),
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
@@ -404,6 +427,37 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  /// 清空 llm_logs + llm_cache（token 统计归零；缓存删除后重复请求会重新计费）。
+  Future<void> _clearLlmStats() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空调用统计与响应缓存？'),
+        content: const Text('token 用量统计将归零；已缓存的 LLM 响应删除后，'
+            '相同请求会重新调用并计费。管线数据不受影响。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('清空')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final db = ref.read(databaseProvider);
+    await db.delete(db.llmLogs).go();
+    await db.delete(db.llmCache).go();
+    if (!mounted) return;
+    setState(() {
+      _totalTokens = 0;
+      _monthTokens = 0;
+    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('已清空')));
+  }
+
   Future<void> _save() async {
     final repo = ref.read(settingsRepoProvider);
     await repo.saveApiConfig(
@@ -423,6 +477,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         accessKeySecret: _ossSk.text.trim(),
       ),
     );
+    await repo.saveLlmBudgetTokens(int.tryParse(_budget.text.trim()) ?? 0);
     ref.read(llmServiceProvider).updateConfig(await repo.loadApiConfig());
     if (mounted) {
       ScaffoldMessenger.of(context)

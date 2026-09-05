@@ -30,7 +30,11 @@ KnowledgeCard cardRow(int id, String term) => KnowledgeCard(
     title: term,
     content: '背景知识内容',
     firstSceneIdx: 0,
-    uncertain: false);
+    uncertain: false,
+    ivlDays: 0,
+    ease: 2.5,
+    reps: 0,
+    lapses: 0);
 
 Widget wrap(Widget child) =>
     MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: child));

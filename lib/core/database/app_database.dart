@@ -81,6 +81,13 @@ class KnowledgeCards extends Table {
   TextColumn get content => text()();
   IntColumn get firstSceneIdx => integer().nullable()();
   BoolColumn get uncertain => boolean().withDefault(const Constant(false))();
+  // SRS（间隔重复）调度字段：dueAt 为 null 表示尚未进入复习循环（新卡）
+  DateTimeColumn get dueAt => dateTime().nullable()();
+  RealColumn get ivlDays => real().withDefault(const Constant(0))();
+  RealColumn get ease => real().withDefault(const Constant(2.5))();
+  IntColumn get reps => integer().withDefault(const Constant(0))();
+  IntColumn get lapses => integer().withDefault(const Constant(0))();
+  DateTimeColumn get lastReviewAt => dateTime().nullable()();
   @override
   List<Set<Column>> get uniqueKeys => [
         {projectId, term}
@@ -157,6 +164,17 @@ class LlmLogs extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+/// LLM 响应缓存：key = sha256(model + jsonMode + messages)。
+/// 命中后跳过 HTTP 且不记 llm_logs，token 统计保持真实花费。
+class LlmCache extends Table {
+  TextColumn get key => text()();
+  TextColumn get response => text()();
+  TextColumn get model => text()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  @override
+  Set<Column> get primaryKey => {key};
+}
+
 @DriftDatabase(tables: [
   Projects,
   Characters,
@@ -171,12 +189,13 @@ class LlmLogs extends Table {
   Annotations,
   Settings,
   LlmLogs,
+  LlmCache,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -186,6 +205,16 @@ class AppDatabase extends _$AppDatabase {
             for (final index in allSchemaEntities.whereType<Index>()) {
               await m.createIndex(index);
             }
+          }
+          if (from < 3) {
+            // v2→v3：SRS 调度列 + LLM 响应缓存表（列带默认值，旧行自动填充）
+            await m.addColumn(knowledgeCards, knowledgeCards.dueAt);
+            await m.addColumn(knowledgeCards, knowledgeCards.ivlDays);
+            await m.addColumn(knowledgeCards, knowledgeCards.ease);
+            await m.addColumn(knowledgeCards, knowledgeCards.reps);
+            await m.addColumn(knowledgeCards, knowledgeCards.lapses);
+            await m.addColumn(knowledgeCards, knowledgeCards.lastReviewAt);
+            await m.createTable(llmCache);
           }
         },
         beforeOpen: (details) async {

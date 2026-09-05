@@ -32,6 +32,8 @@ class SettingsRepository {
   static const _kReaderTheme = 'reader.theme';
   // ASR 模式键
   static const _kAsrMode = 'asr.mode';
+  // LLM 月度 token 预算（0 = 不限）
+  static const _kLlmBudget = 'llm.monthly_budget_tokens';
 
   Future<String?> _get(String key) async =>
       (await (_db.select(_db.settings)..where((t) => t.key.equals(key)))
@@ -123,4 +125,10 @@ class SettingsRepository {
 
   Future<void> saveAsrMode(AsrMode mode) async =>
       _set(_kAsrMode, mode.name);
+
+  Future<int> loadLlmBudgetTokens() async =>
+      int.tryParse(await _get(_kLlmBudget) ?? '') ?? 0;
+
+  Future<void> saveLlmBudgetTokens(int tokens) async =>
+      _set(_kLlmBudget, tokens.toString());
 }

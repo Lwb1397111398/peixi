@@ -2506,6 +2506,68 @@ class $KnowledgeCardsTable extends KnowledgeCards
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _dueAtMeta = const VerificationMeta('dueAt');
+  @override
+  late final GeneratedColumn<DateTime> dueAt = GeneratedColumn<DateTime>(
+    'due_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _ivlDaysMeta = const VerificationMeta(
+    'ivlDays',
+  );
+  @override
+  late final GeneratedColumn<double> ivlDays = GeneratedColumn<double>(
+    'ivl_days',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _easeMeta = const VerificationMeta('ease');
+  @override
+  late final GeneratedColumn<double> ease = GeneratedColumn<double>(
+    'ease',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(2.5),
+  );
+  static const VerificationMeta _repsMeta = const VerificationMeta('reps');
+  @override
+  late final GeneratedColumn<int> reps = GeneratedColumn<int>(
+    'reps',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lapsesMeta = const VerificationMeta('lapses');
+  @override
+  late final GeneratedColumn<int> lapses = GeneratedColumn<int>(
+    'lapses',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lastReviewAtMeta = const VerificationMeta(
+    'lastReviewAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastReviewAt = GeneratedColumn<DateTime>(
+    'last_review_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2515,6 +2577,12 @@ class $KnowledgeCardsTable extends KnowledgeCards
     content,
     firstSceneIdx,
     uncertain,
+    dueAt,
+    ivlDays,
+    ease,
+    reps,
+    lapses,
+    lastReviewAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2578,6 +2646,45 @@ class $KnowledgeCardsTable extends KnowledgeCards
         uncertain.isAcceptableOrUnknown(data['uncertain']!, _uncertainMeta),
       );
     }
+    if (data.containsKey('due_at')) {
+      context.handle(
+        _dueAtMeta,
+        dueAt.isAcceptableOrUnknown(data['due_at']!, _dueAtMeta),
+      );
+    }
+    if (data.containsKey('ivl_days')) {
+      context.handle(
+        _ivlDaysMeta,
+        ivlDays.isAcceptableOrUnknown(data['ivl_days']!, _ivlDaysMeta),
+      );
+    }
+    if (data.containsKey('ease')) {
+      context.handle(
+        _easeMeta,
+        ease.isAcceptableOrUnknown(data['ease']!, _easeMeta),
+      );
+    }
+    if (data.containsKey('reps')) {
+      context.handle(
+        _repsMeta,
+        reps.isAcceptableOrUnknown(data['reps']!, _repsMeta),
+      );
+    }
+    if (data.containsKey('lapses')) {
+      context.handle(
+        _lapsesMeta,
+        lapses.isAcceptableOrUnknown(data['lapses']!, _lapsesMeta),
+      );
+    }
+    if (data.containsKey('last_review_at')) {
+      context.handle(
+        _lastReviewAtMeta,
+        lastReviewAt.isAcceptableOrUnknown(
+          data['last_review_at']!,
+          _lastReviewAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -2619,6 +2726,30 @@ class $KnowledgeCardsTable extends KnowledgeCards
         DriftSqlType.bool,
         data['${effectivePrefix}uncertain'],
       )!,
+      dueAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}due_at'],
+      ),
+      ivlDays: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}ivl_days'],
+      )!,
+      ease: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}ease'],
+      )!,
+      reps: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}reps'],
+      )!,
+      lapses: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}lapses'],
+      )!,
+      lastReviewAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_review_at'],
+      ),
     );
   }
 
@@ -2636,6 +2767,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
   final String content;
   final int? firstSceneIdx;
   final bool uncertain;
+  final DateTime? dueAt;
+  final double ivlDays;
+  final double ease;
+  final int reps;
+  final int lapses;
+  final DateTime? lastReviewAt;
   const KnowledgeCard({
     required this.id,
     required this.projectId,
@@ -2644,6 +2781,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
     required this.content,
     this.firstSceneIdx,
     required this.uncertain,
+    this.dueAt,
+    required this.ivlDays,
+    required this.ease,
+    required this.reps,
+    required this.lapses,
+    this.lastReviewAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2657,6 +2800,16 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
       map['first_scene_idx'] = Variable<int>(firstSceneIdx);
     }
     map['uncertain'] = Variable<bool>(uncertain);
+    if (!nullToAbsent || dueAt != null) {
+      map['due_at'] = Variable<DateTime>(dueAt);
+    }
+    map['ivl_days'] = Variable<double>(ivlDays);
+    map['ease'] = Variable<double>(ease);
+    map['reps'] = Variable<int>(reps);
+    map['lapses'] = Variable<int>(lapses);
+    if (!nullToAbsent || lastReviewAt != null) {
+      map['last_review_at'] = Variable<DateTime>(lastReviewAt);
+    }
     return map;
   }
 
@@ -2671,6 +2824,16 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
           ? const Value.absent()
           : Value(firstSceneIdx),
       uncertain: Value(uncertain),
+      dueAt: dueAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dueAt),
+      ivlDays: Value(ivlDays),
+      ease: Value(ease),
+      reps: Value(reps),
+      lapses: Value(lapses),
+      lastReviewAt: lastReviewAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastReviewAt),
     );
   }
 
@@ -2687,6 +2850,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
       content: serializer.fromJson<String>(json['content']),
       firstSceneIdx: serializer.fromJson<int?>(json['firstSceneIdx']),
       uncertain: serializer.fromJson<bool>(json['uncertain']),
+      dueAt: serializer.fromJson<DateTime?>(json['dueAt']),
+      ivlDays: serializer.fromJson<double>(json['ivlDays']),
+      ease: serializer.fromJson<double>(json['ease']),
+      reps: serializer.fromJson<int>(json['reps']),
+      lapses: serializer.fromJson<int>(json['lapses']),
+      lastReviewAt: serializer.fromJson<DateTime?>(json['lastReviewAt']),
     );
   }
   @override
@@ -2700,6 +2869,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
       'content': serializer.toJson<String>(content),
       'firstSceneIdx': serializer.toJson<int?>(firstSceneIdx),
       'uncertain': serializer.toJson<bool>(uncertain),
+      'dueAt': serializer.toJson<DateTime?>(dueAt),
+      'ivlDays': serializer.toJson<double>(ivlDays),
+      'ease': serializer.toJson<double>(ease),
+      'reps': serializer.toJson<int>(reps),
+      'lapses': serializer.toJson<int>(lapses),
+      'lastReviewAt': serializer.toJson<DateTime?>(lastReviewAt),
     };
   }
 
@@ -2711,6 +2886,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
     String? content,
     Value<int?> firstSceneIdx = const Value.absent(),
     bool? uncertain,
+    Value<DateTime?> dueAt = const Value.absent(),
+    double? ivlDays,
+    double? ease,
+    int? reps,
+    int? lapses,
+    Value<DateTime?> lastReviewAt = const Value.absent(),
   }) => KnowledgeCard(
     id: id ?? this.id,
     projectId: projectId ?? this.projectId,
@@ -2721,6 +2902,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
         ? firstSceneIdx.value
         : this.firstSceneIdx,
     uncertain: uncertain ?? this.uncertain,
+    dueAt: dueAt.present ? dueAt.value : this.dueAt,
+    ivlDays: ivlDays ?? this.ivlDays,
+    ease: ease ?? this.ease,
+    reps: reps ?? this.reps,
+    lapses: lapses ?? this.lapses,
+    lastReviewAt: lastReviewAt.present ? lastReviewAt.value : this.lastReviewAt,
   );
   KnowledgeCard copyWithCompanion(KnowledgeCardsCompanion data) {
     return KnowledgeCard(
@@ -2733,6 +2920,14 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
           ? data.firstSceneIdx.value
           : this.firstSceneIdx,
       uncertain: data.uncertain.present ? data.uncertain.value : this.uncertain,
+      dueAt: data.dueAt.present ? data.dueAt.value : this.dueAt,
+      ivlDays: data.ivlDays.present ? data.ivlDays.value : this.ivlDays,
+      ease: data.ease.present ? data.ease.value : this.ease,
+      reps: data.reps.present ? data.reps.value : this.reps,
+      lapses: data.lapses.present ? data.lapses.value : this.lapses,
+      lastReviewAt: data.lastReviewAt.present
+          ? data.lastReviewAt.value
+          : this.lastReviewAt,
     );
   }
 
@@ -2745,7 +2940,13 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
           ..write('title: $title, ')
           ..write('content: $content, ')
           ..write('firstSceneIdx: $firstSceneIdx, ')
-          ..write('uncertain: $uncertain')
+          ..write('uncertain: $uncertain, ')
+          ..write('dueAt: $dueAt, ')
+          ..write('ivlDays: $ivlDays, ')
+          ..write('ease: $ease, ')
+          ..write('reps: $reps, ')
+          ..write('lapses: $lapses, ')
+          ..write('lastReviewAt: $lastReviewAt')
           ..write(')'))
         .toString();
   }
@@ -2759,6 +2960,12 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
     content,
     firstSceneIdx,
     uncertain,
+    dueAt,
+    ivlDays,
+    ease,
+    reps,
+    lapses,
+    lastReviewAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -2770,7 +2977,13 @@ class KnowledgeCard extends DataClass implements Insertable<KnowledgeCard> {
           other.title == this.title &&
           other.content == this.content &&
           other.firstSceneIdx == this.firstSceneIdx &&
-          other.uncertain == this.uncertain);
+          other.uncertain == this.uncertain &&
+          other.dueAt == this.dueAt &&
+          other.ivlDays == this.ivlDays &&
+          other.ease == this.ease &&
+          other.reps == this.reps &&
+          other.lapses == this.lapses &&
+          other.lastReviewAt == this.lastReviewAt);
 }
 
 class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
@@ -2781,6 +2994,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
   final Value<String> content;
   final Value<int?> firstSceneIdx;
   final Value<bool> uncertain;
+  final Value<DateTime?> dueAt;
+  final Value<double> ivlDays;
+  final Value<double> ease;
+  final Value<int> reps;
+  final Value<int> lapses;
+  final Value<DateTime?> lastReviewAt;
   const KnowledgeCardsCompanion({
     this.id = const Value.absent(),
     this.projectId = const Value.absent(),
@@ -2789,6 +3008,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
     this.content = const Value.absent(),
     this.firstSceneIdx = const Value.absent(),
     this.uncertain = const Value.absent(),
+    this.dueAt = const Value.absent(),
+    this.ivlDays = const Value.absent(),
+    this.ease = const Value.absent(),
+    this.reps = const Value.absent(),
+    this.lapses = const Value.absent(),
+    this.lastReviewAt = const Value.absent(),
   });
   KnowledgeCardsCompanion.insert({
     this.id = const Value.absent(),
@@ -2798,6 +3023,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
     required String content,
     this.firstSceneIdx = const Value.absent(),
     this.uncertain = const Value.absent(),
+    this.dueAt = const Value.absent(),
+    this.ivlDays = const Value.absent(),
+    this.ease = const Value.absent(),
+    this.reps = const Value.absent(),
+    this.lapses = const Value.absent(),
+    this.lastReviewAt = const Value.absent(),
   }) : projectId = Value(projectId),
        term = Value(term),
        title = Value(title),
@@ -2810,6 +3041,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
     Expression<String>? content,
     Expression<int>? firstSceneIdx,
     Expression<bool>? uncertain,
+    Expression<DateTime>? dueAt,
+    Expression<double>? ivlDays,
+    Expression<double>? ease,
+    Expression<int>? reps,
+    Expression<int>? lapses,
+    Expression<DateTime>? lastReviewAt,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -2819,6 +3056,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
       if (content != null) 'content': content,
       if (firstSceneIdx != null) 'first_scene_idx': firstSceneIdx,
       if (uncertain != null) 'uncertain': uncertain,
+      if (dueAt != null) 'due_at': dueAt,
+      if (ivlDays != null) 'ivl_days': ivlDays,
+      if (ease != null) 'ease': ease,
+      if (reps != null) 'reps': reps,
+      if (lapses != null) 'lapses': lapses,
+      if (lastReviewAt != null) 'last_review_at': lastReviewAt,
     });
   }
 
@@ -2830,6 +3073,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
     Value<String>? content,
     Value<int?>? firstSceneIdx,
     Value<bool>? uncertain,
+    Value<DateTime?>? dueAt,
+    Value<double>? ivlDays,
+    Value<double>? ease,
+    Value<int>? reps,
+    Value<int>? lapses,
+    Value<DateTime?>? lastReviewAt,
   }) {
     return KnowledgeCardsCompanion(
       id: id ?? this.id,
@@ -2839,6 +3088,12 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
       content: content ?? this.content,
       firstSceneIdx: firstSceneIdx ?? this.firstSceneIdx,
       uncertain: uncertain ?? this.uncertain,
+      dueAt: dueAt ?? this.dueAt,
+      ivlDays: ivlDays ?? this.ivlDays,
+      ease: ease ?? this.ease,
+      reps: reps ?? this.reps,
+      lapses: lapses ?? this.lapses,
+      lastReviewAt: lastReviewAt ?? this.lastReviewAt,
     );
   }
 
@@ -2866,6 +3121,24 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
     if (uncertain.present) {
       map['uncertain'] = Variable<bool>(uncertain.value);
     }
+    if (dueAt.present) {
+      map['due_at'] = Variable<DateTime>(dueAt.value);
+    }
+    if (ivlDays.present) {
+      map['ivl_days'] = Variable<double>(ivlDays.value);
+    }
+    if (ease.present) {
+      map['ease'] = Variable<double>(ease.value);
+    }
+    if (reps.present) {
+      map['reps'] = Variable<int>(reps.value);
+    }
+    if (lapses.present) {
+      map['lapses'] = Variable<int>(lapses.value);
+    }
+    if (lastReviewAt.present) {
+      map['last_review_at'] = Variable<DateTime>(lastReviewAt.value);
+    }
     return map;
   }
 
@@ -2878,7 +3151,13 @@ class KnowledgeCardsCompanion extends UpdateCompanion<KnowledgeCard> {
           ..write('title: $title, ')
           ..write('content: $content, ')
           ..write('firstSceneIdx: $firstSceneIdx, ')
-          ..write('uncertain: $uncertain')
+          ..write('uncertain: $uncertain, ')
+          ..write('dueAt: $dueAt, ')
+          ..write('ivlDays: $ivlDays, ')
+          ..write('ease: $ease, ')
+          ..write('reps: $reps, ')
+          ..write('lapses: $lapses, ')
+          ..write('lastReviewAt: $lastReviewAt')
           ..write(')'))
         .toString();
   }
@@ -5371,6 +5650,315 @@ class LlmLogsCompanion extends UpdateCompanion<LlmLog> {
   }
 }
 
+class $LlmCacheTable extends LlmCache
+    with TableInfo<$LlmCacheTable, LlmCacheData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LlmCacheTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _keyMeta = const VerificationMeta('key');
+  @override
+  late final GeneratedColumn<String> key = GeneratedColumn<String>(
+    'key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _responseMeta = const VerificationMeta(
+    'response',
+  );
+  @override
+  late final GeneratedColumn<String> response = GeneratedColumn<String>(
+    'response',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _modelMeta = const VerificationMeta('model');
+  @override
+  late final GeneratedColumn<String> model = GeneratedColumn<String>(
+    'model',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+    defaultValue: currentDateAndTime,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [key, response, model, createdAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'llm_cache';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LlmCacheData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('key')) {
+      context.handle(
+        _keyMeta,
+        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyMeta);
+    }
+    if (data.containsKey('response')) {
+      context.handle(
+        _responseMeta,
+        response.isAcceptableOrUnknown(data['response']!, _responseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_responseMeta);
+    }
+    if (data.containsKey('model')) {
+      context.handle(
+        _modelMeta,
+        model.isAcceptableOrUnknown(data['model']!, _modelMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_modelMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {key};
+  @override
+  LlmCacheData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LlmCacheData(
+      key: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}key'],
+      )!,
+      response: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}response'],
+      )!,
+      model: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}model'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $LlmCacheTable createAlias(String alias) {
+    return $LlmCacheTable(attachedDatabase, alias);
+  }
+}
+
+class LlmCacheData extends DataClass implements Insertable<LlmCacheData> {
+  final String key;
+  final String response;
+  final String model;
+  final DateTime createdAt;
+  const LlmCacheData({
+    required this.key,
+    required this.response,
+    required this.model,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['key'] = Variable<String>(key);
+    map['response'] = Variable<String>(response);
+    map['model'] = Variable<String>(model);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  LlmCacheCompanion toCompanion(bool nullToAbsent) {
+    return LlmCacheCompanion(
+      key: Value(key),
+      response: Value(response),
+      model: Value(model),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory LlmCacheData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LlmCacheData(
+      key: serializer.fromJson<String>(json['key']),
+      response: serializer.fromJson<String>(json['response']),
+      model: serializer.fromJson<String>(json['model']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'key': serializer.toJson<String>(key),
+      'response': serializer.toJson<String>(response),
+      'model': serializer.toJson<String>(model),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  LlmCacheData copyWith({
+    String? key,
+    String? response,
+    String? model,
+    DateTime? createdAt,
+  }) => LlmCacheData(
+    key: key ?? this.key,
+    response: response ?? this.response,
+    model: model ?? this.model,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  LlmCacheData copyWithCompanion(LlmCacheCompanion data) {
+    return LlmCacheData(
+      key: data.key.present ? data.key.value : this.key,
+      response: data.response.present ? data.response.value : this.response,
+      model: data.model.present ? data.model.value : this.model,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LlmCacheData(')
+          ..write('key: $key, ')
+          ..write('response: $response, ')
+          ..write('model: $model, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(key, response, model, createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LlmCacheData &&
+          other.key == this.key &&
+          other.response == this.response &&
+          other.model == this.model &&
+          other.createdAt == this.createdAt);
+}
+
+class LlmCacheCompanion extends UpdateCompanion<LlmCacheData> {
+  final Value<String> key;
+  final Value<String> response;
+  final Value<String> model;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const LlmCacheCompanion({
+    this.key = const Value.absent(),
+    this.response = const Value.absent(),
+    this.model = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LlmCacheCompanion.insert({
+    required String key,
+    required String response,
+    required String model,
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : key = Value(key),
+       response = Value(response),
+       model = Value(model);
+  static Insertable<LlmCacheData> custom({
+    Expression<String>? key,
+    Expression<String>? response,
+    Expression<String>? model,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (key != null) 'key': key,
+      if (response != null) 'response': response,
+      if (model != null) 'model': model,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LlmCacheCompanion copyWith({
+    Value<String>? key,
+    Value<String>? response,
+    Value<String>? model,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return LlmCacheCompanion(
+      key: key ?? this.key,
+      response: response ?? this.response,
+      model: model ?? this.model,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (key.present) {
+      map['key'] = Variable<String>(key.value);
+    }
+    if (response.present) {
+      map['response'] = Variable<String>(response.value);
+    }
+    if (model.present) {
+      map['model'] = Variable<String>(model.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LlmCacheCompanion(')
+          ..write('key: $key, ')
+          ..write('response: $response, ')
+          ..write('model: $model, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -5387,6 +5975,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AnnotationsTable annotations = $AnnotationsTable(this);
   late final $SettingsTable settings = $SettingsTable(this);
   late final $LlmLogsTable llmLogs = $LlmLogsTable(this);
+  late final $LlmCacheTable llmCache = $LlmCacheTable(this);
   late final Index idxCharactersProject = Index(
     'idx_characters_project',
     'CREATE INDEX idx_characters_project ON characters (project_id)',
@@ -5445,6 +6034,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     annotations,
     settings,
     llmLogs,
+    llmCache,
     idxCharactersProject,
     idxSegmentsProject,
     idxScenesProject,
@@ -6270,7 +6860,7 @@ class $$ProjectsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$ProjectsTable, Project>(table),
                   $$ProjectsTableReferences(db, table, e),
                 ),
               )
@@ -6784,7 +7374,7 @@ class $$CharactersTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$CharactersTable, Character>(table),
                   $$CharactersTableReferences(db, table, e),
                 ),
               )
@@ -7131,7 +7721,7 @@ class $$SegmentsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$SegmentsTable, Segment>(table),
                   $$SegmentsTableReferences(db, table, e),
                 ),
               )
@@ -7545,8 +8135,10 @@ class $$ScenesTableTableManager
               ),
           withReferenceMapper: (p0) => p0
               .map(
-                (e) =>
-                    (e.readTable(table), $$ScenesTableReferences(db, table, e)),
+                (e) => (
+                  e.readTable<$ScenesTable, Scene>(table),
+                  $$ScenesTableReferences(db, table, e),
+                ),
               )
               .toList(),
           prefetchHooksCallback:
@@ -7918,7 +8510,7 @@ class $$CommentariesTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$CommentariesTable, Commentary>(table),
                   $$CommentariesTableReferences(db, table, e),
                 ),
               )
@@ -7989,6 +8581,12 @@ typedef $$KnowledgeCardsTableCreateCompanionBuilder =
       required String content,
       Value<int?> firstSceneIdx,
       Value<bool> uncertain,
+      Value<DateTime?> dueAt,
+      Value<double> ivlDays,
+      Value<double> ease,
+      Value<int> reps,
+      Value<int> lapses,
+      Value<DateTime?> lastReviewAt,
     });
 typedef $$KnowledgeCardsTableUpdateCompanionBuilder =
     KnowledgeCardsCompanion Function({
@@ -7999,6 +8597,12 @@ typedef $$KnowledgeCardsTableUpdateCompanionBuilder =
       Value<String> content,
       Value<int?> firstSceneIdx,
       Value<bool> uncertain,
+      Value<DateTime?> dueAt,
+      Value<double> ivlDays,
+      Value<double> ease,
+      Value<int> reps,
+      Value<int> lapses,
+      Value<DateTime?> lastReviewAt,
     });
 
 final class $$KnowledgeCardsTableReferences
@@ -8066,6 +8670,36 @@ class $$KnowledgeCardsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<DateTime> get dueAt => $composableBuilder(
+    column: $table.dueAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get ivlDays => $composableBuilder(
+    column: $table.ivlDays,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get ease => $composableBuilder(
+    column: $table.ease,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get reps => $composableBuilder(
+    column: $table.reps,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lapses => $composableBuilder(
+    column: $table.lapses,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastReviewAt => $composableBuilder(
+    column: $table.lastReviewAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
   $$ProjectsTableFilterComposer get projectId {
     final $$ProjectsTableFilterComposer composer = $composerBuilder(
       composer: this,
@@ -8129,6 +8763,36 @@ class $$KnowledgeCardsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get dueAt => $composableBuilder(
+    column: $table.dueAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get ivlDays => $composableBuilder(
+    column: $table.ivlDays,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get ease => $composableBuilder(
+    column: $table.ease,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get reps => $composableBuilder(
+    column: $table.reps,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lapses => $composableBuilder(
+    column: $table.lapses,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastReviewAt => $composableBuilder(
+    column: $table.lastReviewAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$ProjectsTableOrderingComposer get projectId {
     final $$ProjectsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -8181,6 +8845,26 @@ class $$KnowledgeCardsTableAnnotationComposer
 
   GeneratedColumn<bool> get uncertain =>
       $composableBuilder(column: $table.uncertain, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get dueAt =>
+      $composableBuilder(column: $table.dueAt, builder: (column) => column);
+
+  GeneratedColumn<double> get ivlDays =>
+      $composableBuilder(column: $table.ivlDays, builder: (column) => column);
+
+  GeneratedColumn<double> get ease =>
+      $composableBuilder(column: $table.ease, builder: (column) => column);
+
+  GeneratedColumn<int> get reps =>
+      $composableBuilder(column: $table.reps, builder: (column) => column);
+
+  GeneratedColumn<int> get lapses =>
+      $composableBuilder(column: $table.lapses, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastReviewAt => $composableBuilder(
+    column: $table.lastReviewAt,
+    builder: (column) => column,
+  );
 
   $$ProjectsTableAnnotationComposer get projectId {
     final $$ProjectsTableAnnotationComposer composer = $composerBuilder(
@@ -8243,6 +8927,12 @@ class $$KnowledgeCardsTableTableManager
                 Value<String> content = const Value.absent(),
                 Value<int?> firstSceneIdx = const Value.absent(),
                 Value<bool> uncertain = const Value.absent(),
+                Value<DateTime?> dueAt = const Value.absent(),
+                Value<double> ivlDays = const Value.absent(),
+                Value<double> ease = const Value.absent(),
+                Value<int> reps = const Value.absent(),
+                Value<int> lapses = const Value.absent(),
+                Value<DateTime?> lastReviewAt = const Value.absent(),
               }) => KnowledgeCardsCompanion(
                 id: id,
                 projectId: projectId,
@@ -8251,6 +8941,12 @@ class $$KnowledgeCardsTableTableManager
                 content: content,
                 firstSceneIdx: firstSceneIdx,
                 uncertain: uncertain,
+                dueAt: dueAt,
+                ivlDays: ivlDays,
+                ease: ease,
+                reps: reps,
+                lapses: lapses,
+                lastReviewAt: lastReviewAt,
               ),
           createCompanionCallback:
               ({
@@ -8261,6 +8957,12 @@ class $$KnowledgeCardsTableTableManager
                 required String content,
                 Value<int?> firstSceneIdx = const Value.absent(),
                 Value<bool> uncertain = const Value.absent(),
+                Value<DateTime?> dueAt = const Value.absent(),
+                Value<double> ivlDays = const Value.absent(),
+                Value<double> ease = const Value.absent(),
+                Value<int> reps = const Value.absent(),
+                Value<int> lapses = const Value.absent(),
+                Value<DateTime?> lastReviewAt = const Value.absent(),
               }) => KnowledgeCardsCompanion.insert(
                 id: id,
                 projectId: projectId,
@@ -8269,11 +8971,17 @@ class $$KnowledgeCardsTableTableManager
                 content: content,
                 firstSceneIdx: firstSceneIdx,
                 uncertain: uncertain,
+                dueAt: dueAt,
+                ivlDays: ivlDays,
+                ease: ease,
+                reps: reps,
+                lapses: lapses,
+                lastReviewAt: lastReviewAt,
               ),
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$KnowledgeCardsTable, KnowledgeCard>(table),
                   $$KnowledgeCardsTableReferences(db, table, e),
                 ),
               )
@@ -8650,7 +9358,7 @@ class $$QuestionsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$QuestionsTable, Question>(table),
                   $$QuestionsTableReferences(db, table, e),
                 ),
               )
@@ -8981,7 +9689,7 @@ class $$QaRecordsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$QaRecordsTable, QaRecord>(table),
                   $$QaRecordsTableReferences(db, table, e),
                 ),
               )
@@ -9326,7 +10034,7 @@ class $$ChaptersTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$ChaptersTable, Chapter>(table),
                   $$ChaptersTableReferences(db, table, e),
                 ),
               )
@@ -9701,7 +10409,7 @@ class $$ParagraphsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$ParagraphsTable, Paragraph>(table),
                   $$ParagraphsTableReferences(db, table, e),
                 ),
               )
@@ -10018,7 +10726,7 @@ class $$AnnotationsTableTableManager
           withReferenceMapper: (p0) => p0
               .map(
                 (e) => (
-                  e.readTable(table),
+                  e.readTable<$AnnotationsTable, Annotation>(table),
                   $$AnnotationsTableReferences(db, table, e),
                 ),
               )
@@ -10184,7 +10892,16 @@ class $$SettingsTableTableManager
             Value<int> rowid = const Value.absent(),
           }) => SettingsCompanion.insert(key: key, value: value, rowid: rowid),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$SettingsTable, Setting>(table),
+                  BaseReferences<_$AppDatabase, $SettingsTable, Setting>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -10412,7 +11129,16 @@ class $$LlmLogsTableTableManager
                 createdAt: createdAt,
               ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable<$LlmLogsTable, LlmLog>(table),
+                  BaseReferences<_$AppDatabase, $LlmLogsTable, LlmLog>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: null,
         ),
@@ -10431,6 +11157,194 @@ typedef $$LlmLogsTableProcessedTableManager =
       $$LlmLogsTableUpdateCompanionBuilder,
       (LlmLog, BaseReferences<_$AppDatabase, $LlmLogsTable, LlmLog>),
       LlmLog,
+      PrefetchHooks Function()
+    >;
+typedef $$LlmCacheTableCreateCompanionBuilder = LlmCacheCompanion Function({
+  required String key,
+  required String response,
+  required String model,
+  Value<DateTime> createdAt,
+  Value<int> rowid,
+});
+typedef $$LlmCacheTableUpdateCompanionBuilder = LlmCacheCompanion Function({
+  Value<String> key,
+  Value<String> response,
+  Value<String> model,
+  Value<DateTime> createdAt,
+  Value<int> rowid,
+});
+
+class $$LlmCacheTableFilterComposer
+    extends Composer<_$AppDatabase, $LlmCacheTable> {
+  $$LlmCacheTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get key => $composableBuilder(
+    column: $table.key,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get response => $composableBuilder(
+    column: $table.response,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get model => $composableBuilder(
+    column: $table.model,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LlmCacheTableOrderingComposer
+    extends Composer<_$AppDatabase, $LlmCacheTable> {
+  $$LlmCacheTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get key => $composableBuilder(
+    column: $table.key,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get response => $composableBuilder(
+    column: $table.response,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get model => $composableBuilder(
+    column: $table.model,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LlmCacheTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LlmCacheTable> {
+  $$LlmCacheTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get key =>
+      $composableBuilder(column: $table.key, builder: (column) => column);
+
+  GeneratedColumn<String> get response =>
+      $composableBuilder(column: $table.response, builder: (column) => column);
+
+  GeneratedColumn<String> get model =>
+      $composableBuilder(column: $table.model, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$LlmCacheTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LlmCacheTable,
+          LlmCacheData,
+          $$LlmCacheTableFilterComposer,
+          $$LlmCacheTableOrderingComposer,
+          $$LlmCacheTableAnnotationComposer,
+          $$LlmCacheTableCreateCompanionBuilder,
+          $$LlmCacheTableUpdateCompanionBuilder,
+          (
+            LlmCacheData,
+            BaseReferences<_$AppDatabase, $LlmCacheTable, LlmCacheData>,
+          ),
+          LlmCacheData,
+          PrefetchHooks Function()
+        > {
+  $$LlmCacheTableTableManager(_$AppDatabase db, $LlmCacheTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LlmCacheTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LlmCacheTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LlmCacheTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> key = const Value.absent(),
+                Value<String> response = const Value.absent(),
+                Value<String> model = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LlmCacheCompanion(
+                key: key,
+                response: response,
+                model: model,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String key,
+                required String response,
+                required String model,
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LlmCacheCompanion.insert(
+                key: key,
+                response: response,
+                model: model,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$LlmCacheTable, LlmCacheData>(table),
+                  BaseReferences<_$AppDatabase, $LlmCacheTable, LlmCacheData>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LlmCacheTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LlmCacheTable,
+      LlmCacheData,
+      $$LlmCacheTableFilterComposer,
+      $$LlmCacheTableOrderingComposer,
+      $$LlmCacheTableAnnotationComposer,
+      $$LlmCacheTableCreateCompanionBuilder,
+      $$LlmCacheTableUpdateCompanionBuilder,
+      (
+        LlmCacheData,
+        BaseReferences<_$AppDatabase, $LlmCacheTable, LlmCacheData>,
+      ),
+      LlmCacheData,
       PrefetchHooks Function()
     >;
 
@@ -10463,4 +11377,6 @@ class $AppDatabaseManager {
       $$SettingsTableTableManager(_db, _db.settings);
   $$LlmLogsTableTableManager get llmLogs =>
       $$LlmLogsTableTableManager(_db, _db.llmLogs);
+  $$LlmCacheTableTableManager get llmCache =>
+      $$LlmCacheTableTableManager(_db, _db.llmCache);
 }
