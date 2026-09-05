@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart'
+    show InputFileStream, OutputFileStream, ZipFileEncoder;
 import 'package:drift/drift.dart' show Value;
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
@@ -12,6 +14,10 @@ import 'package:peixi/features/pipeline/project_meta.dart';
 ///   db.json        十一表全行（含旧 id，导入时重映射）
 ///   `audio/<旧项目id>.<ext>`  临时音频（存在才打包）
 /// 视频项目不含视频本体；导入后 meta.mediaMissing=true（换设备只能看解说/问答）。
+///
+/// 全程流式：导出用 ZipFileEncoder 直接写盘，导入用 InputFileStream
+/// 惰性解包、音频条目分块拷盘。内存峰值从"整包×2-3"降到"最大单条目"
+/// （wav 项目一条音频就可达数百 MB，此前整包编解码会翻三倍）。
 class ProjectPackage {
   ProjectPackage(this.db);
   final AppDatabase db;
@@ -19,10 +25,11 @@ class ProjectPackage {
   /// v2：knowledge_cards 行含 SRS 调度列（v1 包导入时自动补默认值）。
   static const version = 2;
 
-  /// 构建包字节（UI 用 FilePicker.saveFile 自选位置）
-  Future<({String fileName, List<int> bytes})> buildPackage(
-      int projectId,
-      {required String audioDir}) async {
+  static const _chunkSize = 1 << 16; // 64KB
+
+  /// 流式构建包到 [outputDir]，返回生成的 zip 文件。
+  Future<File> buildPackage(int projectId,
+      {required String outputDir, required String audioDir}) async {
     final project = await (db.select(db.projects)
           ..where((t) => t.id.equals(projectId)))
         .getSingle();
@@ -78,192 +85,239 @@ class ProjectPackage {
       'annotations': [for (final r in annotations) r.toJson()],
     });
 
-    final archive = Archive()
-      ..addFile(ArchiveFile.string(
+    // 临时音频（存在则打包）
+    final meta = ProjectMeta.fromJson(project.metaJson);
+    File? audioFile;
+    if (meta.audioFormat != null) {
+      final f = File('$audioDir/$projectId.${meta.audioFormat}');
+      if (f.existsSync()) audioFile = f;
+    }
+
+    final safeTitle = project.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final fileName = '${safeTitle}_$projectId.peixi.zip';
+    final zipPath = '$outputDir/$fileName';
+
+    final encoder = ZipFileEncoder();
+    encoder.create(zipPath);
+    Object? error;
+    StackTrace? stack;
+    try {
+      encoder.addArchiveFile(ArchiveFile.string(
           'manifest.json',
           jsonEncode({
             'version': version,
             'exportedAt': DateTime.now().toIso8601String(),
             'projectTitle': project.title,
             'type': project.type,
-          })))
-      ..addFile(ArchiveFile.string('db.json', dbJson));
-
-    // 临时音频（存在则打包）
-    final meta = ProjectMeta.fromJson(project.metaJson);
-    if (meta.audioFormat != null) {
-      final f = File('$audioDir/$projectId.${meta.audioFormat}');
-      if (f.existsSync()) {
-        archive.addFile(ArchiveFile(
-            'audio/$projectId.${meta.audioFormat}', f.lengthSync(),
-            f.readAsBytesSync()));
+          })));
+      encoder.addArchiveFile(ArchiveFile.string('db.json', dbJson));
+      if (audioFile != null) {
+        encoder.addFileSync(
+            audioFile, 'audio/$projectId.${meta.audioFormat}');
       }
+    } catch (e, st) {
+      error = e;
+      stack = st;
     }
-
-    final zip = ZipEncoder().encode(archive);
-    final safeTitle = project.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    return (
-        fileName: '${safeTitle}_$projectId.peixi.zip', bytes: zip);
+    encoder.closeSync();
+    if (error != null) {
+      final partial = File(zipPath);
+      if (partial.existsSync()) partial.deleteSync();
+      Error.throwWithStackTrace(error, stack!);
+    }
+    return File(zipPath);
   }
 
-  /// 落盘到指定目录（测试/批量备份用）
+  /// 落盘到指定目录（测试/批量备份用）。
   Future<File> exportProject(int projectId,
       {required String outputDir, required String audioDir}) async {
-    final built =
-        await buildPackage(projectId, audioDir: audioDir);
-    final out = File('$outputDir/${built.fileName}');
-    await out.writeAsBytes(built.bytes);
-    return out;
+    await Directory(outputDir).create(recursive: true);
+    return buildPackage(projectId, outputDir: outputDir, audioDir: audioDir);
   }
 
   Future<int> importProject(File zipFile,
       {required String audioDir}) async {
-    final bytes = zipFile.readAsBytesSync();
-    final archive = ZipDecoder().decodeBytes(bytes);
-    ArchiveFile findFile(String name) {
-      final f = archive.findFile(name);
-      if (f == null) throw Exception('项目包缺少 $name，文件可能损坏');
-      return f;
+    final input = InputFileStream(zipFile.path);
+    late final int newProjectId;
+    try {
+      final archive = ZipDecoder().decodeStream(input);
+      ArchiveFile findFile(String name) {
+        final f = archive.findFile(name);
+        if (f == null) throw Exception('项目包缺少 $name，文件可能损坏');
+        return f;
+      }
+
+      findFile('manifest.json'); // 校验存在
+      final dbData =
+          jsonDecode(utf8.decode(findFile('db.json').content as List<int>))
+              as Map<String, dynamic>;
+      List<Map<String, dynamic>> rows(String table) =>
+          ((dbData[table] as List?) ?? const [])
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
+
+      const noId = Value<int>.absent();
+
+      newProjectId = await db.transaction(() async {
+        // projects（视频项目标记媒体缺失；id 换新）
+        final projectMap = rows('projects').single;
+        final isVideo = projectMap['type'] == 'video';
+        if (isVideo) {
+          final meta = ProjectMeta.fromJson(projectMap['metaJson'] as String?)
+            ..mediaMissing = true;
+          projectMap['metaJson'] = meta.encode();
+        }
+        final project = Project.fromJson(projectMap)
+            .toCompanion(false)
+            .copyWith(id: noId);
+        final projectId = await db.into(db.projects).insert(project);
+
+        // 依赖序重映射插入（fromJson 保留旧 id → copyWith 换新 id/外键）
+        final charIdMap = <int, int>{};
+        for (final m in rows('characters')) {
+          final oldId = m['id'] as int;
+          final comp = Character.fromJson(m)
+              .toCompanion(false)
+              .copyWith(id: noId, projectId: Value(projectId));
+          charIdMap[oldId] = await db.into(db.characters).insert(comp);
+        }
+
+        final sceneIdMap = <int, int>{};
+        for (final m in rows('scenes')) {
+          final oldId = m['id'] as int;
+          final comp = Scene.fromJson(m)
+              .toCompanion(false)
+              .copyWith(id: noId, projectId: Value(projectId));
+          sceneIdMap[oldId] = await db.into(db.scenes).insert(comp);
+        }
+
+        final chapterIdMap = <int, int>{};
+        for (final m in rows('chapters')) {
+          final oldId = m['id'] as int;
+          final comp = Chapter.fromJson(m)
+              .toCompanion(false)
+              .copyWith(id: noId, projectId: Value(projectId));
+          chapterIdMap[oldId] = await db.into(db.chapters).insert(comp);
+        }
+
+        final questionIdMap = <int, int>{};
+        for (final m in rows('questions')) {
+          final oldId = m['id'] as int;
+          final q = Question.fromJson(m).toCompanion(false);
+          final sceneId = m['sceneId'] as int?;
+          final comp = q.copyWith(
+              id: noId,
+              projectId: Value(projectId),
+              sceneId: sceneId == null
+                  ? const Value<int>.absent()
+                  : Value(sceneIdMap[sceneId]));
+          questionIdMap[oldId] = await db.into(db.questions).insert(comp);
+        }
+
+        for (final m in rows('segments')) {
+          final s = Segment.fromJson(m).toCompanion(false);
+          final speaker = m['speakerCharId'] as int?;
+          final comp = s.copyWith(
+              id: noId,
+              projectId: Value(projectId),
+              speakerCharId: speaker == null
+                  ? const Value<int>.absent()
+                  : Value(charIdMap[speaker]));
+          await db.into(db.segments).insert(comp);
+        }
+
+        for (final m in rows('commentaries')) {
+          final comp = Commentary.fromJson(m).toCompanion(false).copyWith(
+              id: noId, sceneId: Value(sceneIdMap[m['sceneId'] as int]!));
+          await db.into(db.commentaries).insert(comp);
+        }
+
+        for (final m in rows('knowledge_cards')) {
+          // v1 包没有 SRS 列；fromJson 对缺失的非空列会抛类型错误，先补默认值
+          for (final e in const {
+            'dueAt': null,
+            'ivlDays': 0.0,
+            'ease': 2.5,
+            'reps': 0,
+            'lapses': 0,
+            'lastReviewAt': null,
+          }.entries) {
+            m.putIfAbsent(e.key, () => e.value);
+          }
+          final comp = KnowledgeCard.fromJson(m)
+              .toCompanion(false)
+              .copyWith(id: noId, projectId: Value(projectId));
+          await db.into(db.knowledgeCards).insert(comp);
+        }
+
+        for (final m in rows('qa_records')) {
+          final comp = QaRecord.fromJson(m).toCompanion(false).copyWith(
+              id: noId,
+              questionId: Value(questionIdMap[m['questionId'] as int]!));
+          await db.into(db.qaRecords).insert(comp);
+        }
+
+        final paraIdMap = <int, int>{};
+        for (final m in rows('paragraphs')) {
+          final oldId = m['id'] as int;
+          final para = Paragraph.fromJson(m).toCompanion(false);
+          final chapterId = m['chapterId'] as int?;
+          final comp = para.copyWith(
+              id: noId,
+              projectId: Value(projectId),
+              chapterId: chapterId == null
+                  ? const Value<int>.absent()
+                  : Value(chapterIdMap[chapterId]));
+          paraIdMap[oldId] = await db.into(db.paragraphs).insert(comp);
+        }
+
+        for (final m in rows('annotations')) {
+          final comp = Annotation.fromJson(m).toCompanion(false).copyWith(
+              id: noId, paraId: Value(paraIdMap[m['paraId'] as int]!));
+          await db.into(db.annotations).insert(comp);
+        }
+
+        // 音频还原（包内旧 id 命名 → 新项目 id），条目流式分块拷盘
+        for (final f in archive.files) {
+          if (f.isFile && f.name.startsWith('audio/')) {
+            final ext = f.name.split('.').last;
+            await _extractEntryToFile(
+                f, File('$audioDir/$projectId.$ext'));
+          }
+        }
+
+        return projectId;
+      });
+    } finally {
+      input.closeSync();
     }
-
-    findFile('manifest.json'); // 校验存在
-    final dbData = jsonDecode(utf8.decode(findFile('db.json').content))
-        as Map<String, dynamic>;
-    List<Map<String, dynamic>> rows(String table) =>
-        ((dbData[table] as List?) ?? const [])
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-
-    const noId = Value<int>.absent();
-
-    return db.transaction(() async {
-      // projects（视频项目标记媒体缺失；id 换新）
-      final projectMap = rows('projects').single;
-      final isVideo = projectMap['type'] == 'video';
-      if (isVideo) {
-        final meta = ProjectMeta.fromJson(projectMap['metaJson'] as String?)
-          ..mediaMissing = true;
-        projectMap['metaJson'] = meta.encode();
-      }
-      final project =
-          Project.fromJson(projectMap).toCompanion(false).copyWith(id: noId);
-      final newProjectId = await db.into(db.projects).insert(project);
-
-      // 依赖序重映射插入（fromJson 保留旧 id → copyWith 换新 id/外键）
-      final charIdMap = <int, int>{};
-      for (final m in rows('characters')) {
-        final oldId = m['id'] as int;
-        final comp = Character.fromJson(m)
-            .toCompanion(false)
-            .copyWith(id: noId, projectId: Value(newProjectId));
-        charIdMap[oldId] = await db.into(db.characters).insert(comp);
-      }
-
-      final sceneIdMap = <int, int>{};
-      for (final m in rows('scenes')) {
-        final oldId = m['id'] as int;
-        final comp = Scene.fromJson(m)
-            .toCompanion(false)
-            .copyWith(id: noId, projectId: Value(newProjectId));
-        sceneIdMap[oldId] = await db.into(db.scenes).insert(comp);
-      }
-
-      final chapterIdMap = <int, int>{};
-      for (final m in rows('chapters')) {
-        final oldId = m['id'] as int;
-        final comp = Chapter.fromJson(m)
-            .toCompanion(false)
-            .copyWith(id: noId, projectId: Value(newProjectId));
-        chapterIdMap[oldId] = await db.into(db.chapters).insert(comp);
-      }
-
-      final questionIdMap = <int, int>{};
-      for (final m in rows('questions')) {
-        final oldId = m['id'] as int;
-        final q = Question.fromJson(m).toCompanion(false);
-        final sceneId = m['sceneId'] as int?;
-        final comp = q.copyWith(
-            id: noId,
-            projectId: Value(newProjectId),
-            sceneId: sceneId == null
-                ? const Value<int>.absent()
-                : Value(sceneIdMap[sceneId]));
-        questionIdMap[oldId] = await db.into(db.questions).insert(comp);
-      }
-
-      for (final m in rows('segments')) {
-        final s = Segment.fromJson(m).toCompanion(false);
-        final speaker = m['speakerCharId'] as int?;
-        final comp = s.copyWith(
-            id: noId,
-            projectId: Value(newProjectId),
-            speakerCharId: speaker == null
-                ? const Value<int>.absent()
-                : Value(charIdMap[speaker]));
-        await db.into(db.segments).insert(comp);
-      }
-
-      for (final m in rows('commentaries')) {
-        final comp = Commentary.fromJson(m).toCompanion(false).copyWith(
-            id: noId, sceneId: Value(sceneIdMap[m['sceneId'] as int]!));
-        await db.into(db.commentaries).insert(comp);
-      }
-
-      for (final m in rows('knowledge_cards')) {
-        // v1 包没有 SRS 列；fromJson 对缺失的非空列会抛类型错误，先补默认值
-        for (final e in const {
-          'dueAt': null,
-          'ivlDays': 0.0,
-          'ease': 2.5,
-          'reps': 0,
-          'lapses': 0,
-          'lastReviewAt': null,
-        }.entries) {
-          m.putIfAbsent(e.key, () => e.value);
-        }
-        final comp = KnowledgeCard.fromJson(m)
-            .toCompanion(false)
-            .copyWith(id: noId, projectId: Value(newProjectId));
-        await db.into(db.knowledgeCards).insert(comp);
-      }
-
-      for (final m in rows('qa_records')) {
-        final comp = QaRecord.fromJson(m).toCompanion(false).copyWith(
-            id: noId,
-            questionId: Value(questionIdMap[m['questionId'] as int]!));
-        await db.into(db.qaRecords).insert(comp);
-      }
-
-      final paraIdMap = <int, int>{};
-      for (final m in rows('paragraphs')) {
-        final oldId = m['id'] as int;
-        final para = Paragraph.fromJson(m).toCompanion(false);
-        final chapterId = m['chapterId'] as int?;
-        final comp = para.copyWith(
-            id: noId,
-            projectId: Value(newProjectId),
-            chapterId: chapterId == null
-                ? const Value<int>.absent()
-                : Value(chapterIdMap[chapterId]));
-        paraIdMap[oldId] = await db.into(db.paragraphs).insert(comp);
-      }
-
-      for (final m in rows('annotations')) {
-        final comp = Annotation.fromJson(m).toCompanion(false).copyWith(
-            id: noId, paraId: Value(paraIdMap[m['paraId'] as int]!));
-        await db.into(db.annotations).insert(comp);
-      }
-
-      // 音频还原（包内旧 id 命名 → 新项目 id）
-      for (final f in archive.files) {
-        if (f.isFile && f.name.startsWith('audio/')) {
-          final ext = f.name.split('.').last;
-          await File('$audioDir/$newProjectId.$ext')
-              .writeAsBytes(f.content);
-        }
-      }
-
-      return newProjectId;
-    });
+    return newProjectId;
   }
+
+/// 把 zip 条目解压落盘。deflate 条目用 ZLibDecoder 直接从压缩流
+/// 解压到 OutputFileStream（写盘），解压结果不再整条进内存——
+/// 230MB 的 wav 条目峰值从 ~460MB 降到 ~230MB（archive 4.2 在
+/// zip 目录读取阶段会预拷贝全部压缩数据，此为该版本的下限）。
+Future<void> _extractEntryToFile(ArchiveFile entry, File dest) async {
+  final raw = entry.rawContent;
+  if (raw == null) {
+    await dest.writeAsBytes(entry.content as List<int>);
+    return;
+  }
+  final input = raw.getStream(decompress: false);
+  final out = OutputFileStream(dest.path);  try {
+    if (entry.compression == CompressionType.deflate) {
+      ZLibDecoder().decodeStream(input, out, raw: true);
+    } else {
+      // store 条目：分块原样拷贝
+      while (!input.isEOS) {
+        final n = input.length < _chunkSize ? input.length : _chunkSize;
+        if (n <= 0) break;
+        out.writeStream(input.readBytes(n));
+      }
+    }
+  } finally {
+    out.closeSync();
+  }
+}
 }

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
@@ -498,23 +497,26 @@ class _ProjectCard extends ConsumerWidget {
       final audioDir = await ref
           .read(pipelineControllerProvider.notifier)
           .audioDir();
-      final built =
-          await pkg.buildPackage(project.id, audioDir: audioDir.path);
       String? savedPath;
       if (Platform.isAndroid) {
-        // Android 无桌面式"另存为"：写入应用文档目录
+        // Android 无目录选择器：写入应用文档目录
         final docs = await getApplicationDocumentsDirectory();
-        final f = File('${docs.path}/${built.fileName}');
-        await f.writeAsBytes(built.bytes);
+        final f = await pkg.buildPackage(project.id,
+            outputDir: docs.path, audioDir: audioDir.path);
         savedPath = f.path;
       } else {
-        final path = await FilePicker.saveFile(
-            fileName: built.fileName,
-            bytes: Uint8List.fromList(built.bytes));
-        savedPath = path?.toFilePath(windows: Platform.isWindows);
+        // 流式导出不走"带字节的另存为"对话框（那会整包进内存），
+        // 让用户选目标目录，包直接写进去
+        final dir = await FilePicker.getDirectoryPath(dialogTitle: '选择导出位置');
+        if (dir == null) {
+          messenger.showSnackBar(const SnackBar(content: Text('已取消导出')));
+          return;
+        }
+        final f = await pkg.buildPackage(project.id,
+            outputDir: dir, audioDir: audioDir.path);
+        savedPath = f.path;
       }
-      messenger.showSnackBar(SnackBar(
-          content: Text(savedPath == null ? '已取消导出' : '已导出：$savedPath')));
+      messenger.showSnackBar(SnackBar(content: Text('已导出：$savedPath')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('导出失败：$e')));
     }

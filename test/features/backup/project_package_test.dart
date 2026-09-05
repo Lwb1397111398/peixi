@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -204,5 +206,27 @@ void main() {
     expect(card.ivlDays, 0.0);
     expect(card.reps, 0);
     expect(card.dueAt, isNull);
+  });
+
+  test('大音频（32MB 随机数据）流式导出导入：内容 sha256 一致', () async {
+    final oldId = await seedVideo();
+    final rnd = Random(42);
+    final big = List<int>.generate(1 << 25, (_) => rnd.nextInt(256)); // 32MB
+    File('$audioDir/$oldId.mp3').writeAsBytesSync(big);
+
+    final pkg = ProjectPackage(db);
+    final zip = await pkg.exportProject(oldId,
+        outputDir: tmp.path, audioDir: audioDir);
+    expect(zip.lengthSync(), greaterThan(1 << 24),
+        reason: '随机数据几乎不可压缩，包应接近原始大小');
+
+    await (db.delete(db.projects)..where((t) => t.id.equals(oldId))).go();
+    File('$audioDir/$oldId.mp3').deleteSync();
+
+    final newId = await pkg.importProject(zip, audioDir: audioDir);
+    final restored = File('$audioDir/$newId.mp3');
+    expect(restored.lengthSync(), big.length);
+    expect(sha256.convert(restored.readAsBytesSync()).toString(),
+        sha256.convert(big).toString(), reason: '流式分块拷盘内容必须逐字节一致');
   });
 }
