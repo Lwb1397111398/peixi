@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart' show OrderingTerm, Value;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/features/player/commentary_card.dart';
+import 'package:peixi/features/player/player_shortcuts.dart';
 import 'package:peixi/features/player/quiz_engine.dart';
 import 'package:peixi/features/player/quiz_overlay.dart';
 import 'package:peixi/features/player/scene_progress_bar.dart';
@@ -258,23 +260,61 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             ),
         ],
       ),
-      body: Stack(children: [
-        body,
-        if (_activeQuiz != null)
-          Positioned.fill(
-            child: QuizOverlay(
-              question: _activeQuiz!.question,
-              perspectives: _perspectivesOf(_activeQuiz!),
-              onSubmit: (answer) => _recordAnswer(_activeQuiz!, answer, false),
-              onSkip: () => _recordAnswer(_activeQuiz!, '', true),
-              onResume: () {
-                setState(() => _activeQuiz = null);
-                _player.play();
-              },
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Stack(children: [
+          body,
+          if (_activeQuiz != null)
+            Positioned.fill(
+              child: QuizOverlay(
+                question: _activeQuiz!.question,
+                perspectives: _perspectivesOf(_activeQuiz!),
+                onSubmit: (answer) => _recordAnswer(_activeQuiz!, answer, false),
+                onSkip: () => _recordAnswer(_activeQuiz!, '', true),
+                onResume: () {
+                  setState(() => _activeQuiz = null);
+                  _player.play();
+                },
+              ),
             ),
-          ),
-      ]),
+        ]),
+      ),
     );
+  }
+
+  /// 键盘控制：空格暂停/继续、←/→ 快退快进 10s、↑/↓ 音量。
+  /// 答题输入框等编辑框聚焦时全部让位。
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final editing =
+        FocusManager.instance.primaryFocus?.context?.widget is EditableText;
+    switch (resolvePlayerKey(event.logicalKey, editing: editing)) {
+      case PlayerKeyAction.toggle:
+        _player.state.playing ? _player.pause() : _player.play();
+      case PlayerKeyAction.seekBack:
+        _seekBy(-10000);
+      case PlayerKeyAction.seekForward:
+        _seekBy(10000);
+      case PlayerKeyAction.volumeUp:
+        _volumeBy(10);
+      case PlayerKeyAction.volumeDown:
+        _volumeBy(-10);
+      case PlayerKeyAction.none:
+        return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
+  }
+
+  void _seekBy(int deltaMs) {
+    final ms = clampSeekMs(_positionMs, deltaMs, maxMs: _durationMs);
+    _quizEngine?.notifySeek(ms);
+    _player.seek(Duration(milliseconds: ms));
+  }
+
+  Future<void> _volumeBy(int delta) async {
+    final v = (_player.state.volume + delta).clamp(0.0, 100.0);
+    await _player.setVolume(v);
   }
 }
 

@@ -14,6 +14,7 @@ import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/logging/crash_log.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
+import 'package:peixi/core/window/window_bounds.dart';
 import 'package:peixi/providers.dart';
 
 Future<void> main() async {
@@ -36,6 +37,14 @@ Future<void> main() async {
     final repo = SettingsRepository(db, FlutterSecureStorage());
     // 启动清理：90 天前的 LLM 调用日志与响应缓存只占空间不再有用
     await LlmService(db: db).pruneOldEntries();
+    // 桌面端窗口尺寸/位置记忆（失败不阻塞启动）
+    if (WindowBoundsStore.supported) {
+      try {
+        await WindowBoundsStore(repo).init();
+      } catch (e, st) {
+        CrashLog.write('window-init', e, st);
+      }
+    }
     runApp(ProviderScope(
       overrides: [
         databaseProvider.overrideWithValue(db),

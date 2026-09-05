@@ -52,7 +52,7 @@ class ImportFailure {
 /// 一次批量导入的汇总：成功的项目 id、逐文件失败清单、前置校验错误。
 class ImportBatchResult {
   ImportBatchResult({this.configError});
-  final String? configError;
+  String? configError; // 可变：拖拽导入合并多路结果时填入
   final List<int> okIds = [];
   final List<ImportFailure> failures = [];
 }

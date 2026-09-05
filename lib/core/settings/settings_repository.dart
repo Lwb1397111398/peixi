@@ -34,6 +34,8 @@ class SettingsRepository {
   static const _kAsrMode = 'asr.mode';
   // LLM 月度 token 预算（0 = 不限）
   static const _kLlmBudget = 'llm.monthly_budget_tokens';
+  // 桌面窗口边界 'left,top,width,height'
+  static const _kWindowBounds = 'window.bounds';
 
   Future<String?> _get(String key) async =>
       (await (_db.select(_db.settings)..where((t) => t.key.equals(key)))
@@ -131,4 +133,28 @@ class SettingsRepository {
 
   Future<void> saveLlmBudgetTokens(int tokens) async =>
       _set(_kLlmBudget, tokens.toString());
+
+  Future<WindowBounds?> loadWindowBounds() async {
+    final raw = await _get(_kWindowBounds);
+    if (raw == null) return null;
+    final parts = raw.split(',').map(double.tryParse).toList();
+    if (parts.length != 4 || parts.contains(null)) return null;
+    return WindowBounds(
+        left: parts[0]!, top: parts[1]!, width: parts[2]!, height: parts[3]!);
+  }
+
+  Future<void> saveWindowBounds(
+      double left, double top, double width, double height) async {
+    await _set(_kWindowBounds, '$left,$top,$width,$height');
+  }
+}
+
+/// 窗口边界（桌面端尺寸/位置记忆）。
+class WindowBounds {
+  const WindowBounds(
+      {required this.left, required this.top, required this.width, required this.height});
+  final double left;
+  final double top;
+  final double width;
+  final double height;
 }

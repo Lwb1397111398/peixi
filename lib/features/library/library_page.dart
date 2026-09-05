@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/media/drop_classifier.dart';
 import 'package:peixi/features/backup/project_package.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
@@ -20,8 +22,16 @@ import 'package:peixi/features/settings/settings_page.dart';
 import 'package:peixi/providers.dart';
 
 /// 媒体库（设计稿 8.1）：项目卡片网格 + 状态徽章 + 处理进度。
-class LibraryPage extends ConsumerWidget {
+/// 桌面端支持拖拽导入（视频/小说/项目包）与卡片右键菜单。
+class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
+
+  @override
+  ConsumerState<LibraryPage> createState() => _LibraryPageState();
+}
+
+class _LibraryPageState extends ConsumerState<LibraryPage> {
+  int _dragging = 0;
 
   Future<void> _importPackage(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -118,8 +128,70 @@ class LibraryPage extends ConsumerWidget {
     }
   }
 
+  /// 拖拽导入：按扩展名分流到视频/小说/项目包，未知类型提示。
+  Future<void> _onDrop(DropDoneDetails details) async {
+    final videos = <String>[];
+    final novels = <String>[];
+    final packages = <String>[];
+    final unknown = <String>[];
+    for (final f in details.files) {
+      switch (classifyDrop(f.path)) {
+        case DropKind.video:
+          videos.add(f.path);
+        case DropKind.novel:
+          novels.add(f.path);
+        case DropKind.package:
+          packages.add(f.path);
+        case DropKind.unknown:
+          unknown.add(f.name);
+      }
+    }
+    if (unknown.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('无法识别的文件类型：${unknown.take(5).join('、')}'
+              '${unknown.length > 5 ? ' 等' : ''}')));
+    }
+
+    final controller = ref.read(pipelineControllerProvider.notifier);
+    final merged = ImportBatchResult();
+    if (videos.isNotEmpty) {
+      final r = await controller.importVideos(paths: videos);
+      merged
+        ..configError ??= r.configError
+        ..okIds.addAll(r.okIds)
+        ..failures.addAll(r.failures);
+    }
+    if (novels.isNotEmpty) {
+      final r = await controller.importNovels(paths: novels);
+      merged
+        ..configError ??= r.configError
+        ..okIds.addAll(r.okIds)
+        ..failures.addAll(r.failures);
+    }
+    final pkgMsgs = <String>[];
+    for (final path in packages) {
+      try {
+        final audioDir = await controller.audioDir();
+        final newId = await ProjectPackage(ref.read(databaseProvider))
+            .importProject(File(path), audioDir: audioDir.path);
+        pkgMsgs.add('项目包已导入（项目 $newId）');
+      } catch (e) {
+        merged.failures.add(ImportFailure(
+            path.split(RegExp(r'[\\/]')).last, '项目包导入失败：$e'));
+      }
+    }
+    if (!mounted) return;
+    await _handleBatchResult(context, merged,
+        singleDetail: '已导入，开始处理…',
+        manyDetail: (n) => '已开始处理 $n 个项目，逐个排队处理…');
+    if (pkgMsgs.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(pkgMsgs.join('\n'))));
+    }
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final db = ref.watch(databaseProvider);
     final projects = db.select(db.projects).watch();
     final pipeline = ref.watch(pipelineControllerProvider);
@@ -172,39 +244,65 @@ class LibraryPage extends ConsumerWidget {
           ),
         ],
       ),
-      body: StreamBuilder<List<Project>>(
-        stream: projects,
-        builder: (context, snap) {
-          final list = snap.data ?? const [];
-          if (list.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.movie_filter_outlined,
-                      size: 72, color: Colors.grey.shade600),
-                  const SizedBox(height: 12),
-                  Text('还没有项目',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 4),
-                  const Text('点右下角导入一集视频或一本 TXT 小说'),
-                ],
-              ),
-            );
-          }
-          return GridView.builder(
-            padding: const EdgeInsets.all(12),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 320,
-              childAspectRatio: 1.6,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-            ),
-            itemCount: list.length,
-            itemBuilder: (context, i) =>
-                _ProjectCard(project: list[i], state: pipeline[list[i].id]),
-          );
+      body: DropTarget(
+        onDragEntered: (_) => setState(() => _dragging++),
+        onDragExited: (_) =>
+            setState(() => _dragging = (_dragging - 1).clamp(0, 1 << 30)),
+        onDragDone: (details) {
+          setState(() => _dragging = 0);
+          _onDrop(details);
         },
+        child: Stack(children: [
+          StreamBuilder<List<Project>>(
+            stream: projects,
+            builder: (context, snap) {
+              final list = snap.data ?? const [];
+              if (list.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.movie_filter_outlined,
+                          size: 72, color: Colors.grey.shade600),
+                      const SizedBox(height: 12),
+                      Text('还没有项目',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 4),
+                      const Text('点右下角导入，或直接把视频/小说文件拖进窗口'),
+                    ],
+                  ),
+                );
+              }
+              return GridView.builder(
+                padding: const EdgeInsets.all(12),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 320,
+                  childAspectRatio: 1.6,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                ),
+                itemCount: list.length,
+                itemBuilder: (context, i) =>
+                    _ProjectCard(project: list[i], state: pipeline[list[i].id]),
+              );
+            },
+          ),
+          if (_dragging > 0)
+            Positioned.fill(
+              child: Container(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: 0.15),
+                alignment: Alignment.center,
+                child: Text('松手导入：视频 / 小说 / 项目包',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+              ),
+            ),
+        ]),
       ),
     );
   }
@@ -225,6 +323,8 @@ class _ProjectCard extends ConsumerWidget {
       child: InkWell(
         onTap: () => _open(context, ref),
         onLongPress: () => _showActions(context, ref),
+        // 桌面端右键 = 长按菜单
+        onSecondaryTapUp: (_) => _showActions(context, ref),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
