@@ -259,8 +259,10 @@ class PipelineEngine {
         _emit(id, 'subtitle', ProjectStatus.imported,
             detail: '字幕 ${meta.subtitle!.length} 条');
       }
-    } catch (_) {
-      // S2 任何失败都不阻塞主线（设计稿：提取失败则跳过）
+    } catch (e, st) {
+      // S2 任何失败都不阻塞主线（设计稿：提取失败则跳过），但留痕便于排查
+      // 字幕为何缺失——它同时影响播放器字幕轨与 ASR 交叉纠错
+      CrashLog.write('subtitle-extract', e, st);
     }
   }
 

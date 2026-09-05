@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/logging/crash_log.dart';
 import 'package:peixi/features/player/commentary_card.dart';
 import 'package:peixi/features/player/player_shortcuts.dart';
 import 'package:peixi/features/player/quiz_engine.dart';
@@ -139,8 +140,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _subtitleUri = Uri.file(srt.path).toString();
       await _player.setSubtitleTrack(SubtitleTrack.uri(_subtitleUri!));
       if (mounted) setState(() => _subtitlesOn = true);
-    } catch (_) {
-      // 字幕轨加载失败不影响播放
+    } catch (e, st) {
+      // 字幕轨加载失败不影响播放，但留痕便于排查"为何没有字幕"
+      CrashLog.write('subtitle-track', e, st);
     }
   }
 
