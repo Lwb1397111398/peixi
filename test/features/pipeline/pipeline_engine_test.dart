@@ -8,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/asr/asr_client.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
@@ -381,5 +382,52 @@ void main() {
     expect(p.status, ProjectStatus.waitCalibration.db);
     expect(ossAdapter.requests.where((r) => r.method == 'PUT'), hasLength(1),
         reason: '续跑不重复上传');
+  });
+
+  test('内嵌字幕交叉纠错：高重叠句换字幕文本，低重叠句保留 ASR', () async {
+    final meta = ProjectMeta(
+        sourceFilename: '潜伏.S01E03.mkv',
+        episode: 3,
+        durationMs: 2700000,
+        subtitle: [
+          // 与 ASR 句1（72000-75800）几乎完全重叠 → 替换为字幕文本
+          SubtitleEntry(
+              startMs: 71800, endMs: 75900, text: '站长，这件事恐怕没那么简单啊'),
+          // 与 ASR 句2（76000-77500）完全不重叠 → 保留 ASR 文本
+          SubtitleEntry(startMs: 300000, endMs: 305000, text: '风马牛不相及'),
+        ]);
+    final video = File('${videoDir.path}/字幕.S01E01.mkv')
+      ..writeAsBytesSync(List.filled(32, 1));
+    final id = await db.into(db.projects).insert(ProjectsCompanion.insert(
+        type: 'video',
+        title: '字幕',
+        sourcePath: video.path,
+        status: ProjectStatus.imported.db,
+        metaJson: Value(meta.encode())));
+
+    final (engine, _, _) = makeEngine([
+      (200, ''), // PUT
+      (200, ''), // DELETE
+    ], [
+      (200, '{"output":{"task_id":"t-9","task_status":"PENDING"}}'),
+      (200,
+          '{"output":{"task_id":"t-9","task_status":"SUCCEEDED","transcription_url":"https://res/9.json"}}'),
+      (200, asrResultJson),
+    ]);
+    await engine.run(id);
+
+    final p = await reload(id);
+    expect(p.status, ProjectStatus.waitCalibration.db);
+    final segs = await db.select(db.segments).get();
+    expect(segs[0].content, '站长，这件事恐怕没那么简单啊', reason: '高重叠 → 用字幕纠错');
+    expect(segs[1].content, '你先别急', reason: '低重叠 → 保留 ASR');
+    // 时间轴与说话人保持 ASR 原值（场景切分不受影响）
+    expect(segs[0].startMs, 72000);
+    expect(segs[0].endMs, 75800);
+    expect(segs[1].startMs, 76000);
+    // meta_json 里也纠错（角色映射读 normalized）
+    final norm = ProjectMeta.fromJson(p.metaJson).asrNormalized!;
+    expect((norm['sentences'] as List).first['text'],
+        '站长，这件事恐怕没那么简单啊');
   });
 }

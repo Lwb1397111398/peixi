@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:drift/drift.dart' show OrderingTerm, Value;
 import 'package:flutter/material.dart';
@@ -44,6 +45,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _panelCollapsed = false;
   final Set<int> _seenCardIds = {};
   double _playbackRate = 1.0;
+  String? _subtitleUri; // S2 提取的 .srt（存在才有字幕开关）
+  bool _subtitlesOn = false;
 
   Question? _activeQuiz;
   StreamSubscription<Duration>? _posSub;
@@ -118,11 +121,27 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
     await _player.open(Media(p.sourcePath), play: false);
     await _player.setRate(_playbackRate);
+    await _loadSubtitleTrack();
     _posSub = _player.stream.position.listen(_onPosition);
     _playingSub = _player.stream.playing.listen((playing) {
       if (!mounted) return;
       setState(() => _paused = !playing);
     });
+  }
+
+  /// S2 提取的内嵌字幕轨（有则默认开启，AppBar 可切换）。
+  Future<void> _loadSubtitleTrack() async {
+    try {
+      final audioDir =
+          await ref.read(pipelineControllerProvider.notifier).audioDir();
+      final srt = File('${audioDir.path}/${widget.projectId}.srt');
+      if (!srt.existsSync()) return;
+      _subtitleUri = Uri.file(srt.path).toString();
+      await _player.setSubtitleTrack(SubtitleTrack.uri(_subtitleUri!));
+      if (mounted) setState(() => _subtitlesOn = true);
+    } catch (_) {
+      // 字幕轨加载失败不影响播放
+    }
   }
 
   void _onPosition(Duration pos) {
@@ -238,6 +257,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       appBar: AppBar(
         title: Text('${_project!.title} · 观看'),
         actions: [
+          if (_subtitleUri != null)
+            IconButton(
+              icon: Icon(_subtitlesOn
+                  ? Icons.closed_caption
+                  : Icons.closed_caption_off),
+              tooltip: _subtitlesOn ? '关闭字幕' : '显示字幕',
+              onPressed: () async {
+                final on = !_subtitlesOn;
+                await _player.setSubtitleTrack(on
+                    ? SubtitleTrack.uri(_subtitleUri!)
+                    : SubtitleTrack.no());
+                if (mounted) setState(() => _subtitlesOn = on);
+              },
+            ),
           PopupMenuButton<double>(
             tooltip: '播放倍速',
             icon: const Icon(Icons.speed_outlined),

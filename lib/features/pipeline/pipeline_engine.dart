@@ -14,6 +14,7 @@ import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
+import 'package:peixi/features/pipeline/subtitle_aligner.dart';
 
 /// 进度事件（媒体库卡片 / 处理页监听）。
 class PipelineEvent {
@@ -398,8 +399,15 @@ class PipelineEngine {
   }
 
   /// 规范化结果 → meta_json；对白行 → segments（幂等：先清旧）。
+  /// 有内嵌字幕时先做交叉纠错（字幕文本更可靠，时间轴/说话人不变）。
   Future<void> _persistAsrResult(
       int id, ProjectMeta meta, NormalizedAsr norm) async {
+    final subs = meta.subtitle;
+    if (subs != null && subs.isNotEmpty) {
+      norm = NormalizedAsr(
+          durationMs: norm.durationMs,
+          sentences: correctWithSubtitles(norm.sentences, subs));
+    }
     meta.asrNormalized = {
       'duration_ms': norm.durationMs,
       'sentences': [

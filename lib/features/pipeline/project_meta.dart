@@ -18,7 +18,7 @@ class ProjectMeta {
     this.durationMs = 0,
     this.hasSubtitle = false,
     this.audioFormat,
-    List<SubtitleEntry>? subtitle,
+    this.subtitle,
     this.ossKey,
     this.asrTaskId,
     this.asrNormalized,
