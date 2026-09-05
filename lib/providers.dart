@@ -2,11 +2,16 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_service.dart';
+import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 
 /// 共享 Dio（ASR 等客户端复用）
 final dioProvider = Provider<Dio>((ref) => Dio());
+
+/// ffmpeg 门面（导入探测/抽音频/抽字幕）；测试用 Fake 覆写
+final ffmpegServiceProvider =
+    Provider<FFmpegService>((ref) => FFmpegKitService());
 
 /// main() 里完成异步初始化后 overrideWithValue 注入
 final databaseProvider =

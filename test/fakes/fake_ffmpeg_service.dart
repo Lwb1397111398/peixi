@@ -10,10 +10,14 @@ class FakeFFmpegService implements FFmpegService {
   final bool hasSubtitle;
   int extractCalls = 0;
   Object? Function(String input, String output)? onExtract;
+  Object? Function(String path)? onProbe;
 
   @override
-  Future<MediaInfo> probe(String path) async =>
-      MediaInfo(durationMs: durationMs, hasSubtitle: hasSubtitle);
+  Future<MediaInfo> probe(String path) async {
+    final err = onProbe?.call(path);
+    if (err != null) throw err;
+    return MediaInfo(durationMs: durationMs, hasSubtitle: hasSubtitle);
+  }
 
   @override
   Future<void> extractAudio(String input, String output,

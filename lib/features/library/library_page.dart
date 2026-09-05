@@ -28,16 +28,93 @@ class LibraryPage extends ConsumerWidget {
     final picked = await FilePicker.pickFiles(
         type: FileType.custom, allowedExtensions: ['zip', 'peixi']);
     if (picked.isEmpty) return;
-    final file = picked.single;
-    try {
-      final audioDir = await ref
-          .read(pipelineControllerProvider.notifier)
-          .audioDir();
-      final newId = await ProjectPackage(ref.read(databaseProvider))
-          .importProject(File(file.path!), audioDir: audioDir.path);
-      messenger.showSnackBar(SnackBar(content: Text('项目包已导入（项目 $newId）')));
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('导入失败：$e')));
+    final ok = <String>[];
+    final errors = <String>[];
+    for (final file in picked) {
+      try {
+        final audioDir = await ref
+            .read(pipelineControllerProvider.notifier)
+            .audioDir();
+        final newId = await ProjectPackage(ref.read(databaseProvider))
+            .importProject(File(file.path!), audioDir: audioDir.path);
+        ok.add('项目 $newId');
+      } catch (e) {
+        errors.add('${file.name}：$e');
+      }
+    }
+    final msg = [
+      if (ok.isNotEmpty) '已导入 ${ok.length} 个项目包',
+      ...errors,
+    ].join('\n');
+    if (msg.isNotEmpty) messenger.showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _importVideos(BuildContext context, WidgetRef ref) async {
+    final res =
+        await ref.read(pipelineControllerProvider.notifier).importVideos();
+    if (!context.mounted) return;
+    await _handleBatchResult(context, res,
+        singleDetail: '视频已导入，开始处理…',
+        manyDetail: (n) => '已开始处理 $n 集视频，逐个排队处理…');
+  }
+
+  Future<void> _importNovels(BuildContext context, WidgetRef ref) async {
+    final res =
+        await ref.read(pipelineControllerProvider.notifier).importNovels();
+    if (!context.mounted) return;
+    await _handleBatchResult(context, res,
+        singleDetail: '小说已导入，正在提取人物与生成批注…',
+        manyDetail: (n) => '已开始处理 $n 本小说，逐个排队处理…');
+  }
+
+  /// 批量导入结果统一呈现：配置错误提示 / 失败清单弹窗 /
+  /// 单个成功进处理页 / 多个成功 SnackBar 汇总。
+  Future<void> _handleBatchResult(
+      BuildContext context, ImportBatchResult res,
+      {required String singleDetail,
+      required String Function(int) manyDetail}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    if (res.configError != null) {
+      messenger.showSnackBar(SnackBar(content: Text(res.configError!)));
+      return;
+    }
+    if (res.failures.isNotEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('部分文件导入失败'),
+          content: SizedBox(
+            width: 360,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final f in res.failures)
+                  ListTile(
+                      dense: true,
+                      title: Text(f.file,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(f.error)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('知道了'))
+          ],
+        ),
+      );
+      if (!context.mounted) return;
+    }
+    if (res.okIds.isEmpty) return;
+    if (res.okIds.length == 1) {
+      messenger.showSnackBar(SnackBar(content: Text(singleDetail)));
+      await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) =>
+                  ProcessingPage(projectId: res.okIds.first)));
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(manyDetail(res.okIds.length))));
     }
   }
 
@@ -84,48 +161,14 @@ class LibraryPage extends ConsumerWidget {
             heroTag: 'import_video',
             icon: const Icon(Icons.video_file_outlined),
             label: const Text('导入视频'),
-            onPressed: () async {
-              final res = await ref
-                  .read(pipelineControllerProvider.notifier)
-                  .importVideo();
-              if (!context.mounted) return;
-              if (res.error != null) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text(res.error!)));
-              } else if (res.projectId != null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('视频已导入，开始处理…')));
-                await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) =>
-                            ProcessingPage(projectId: res.projectId!)));
-              }
-            },
+            onPressed: () => _importVideos(context, ref),
           ),
           const SizedBox(height: 10),
           FloatingActionButton.extended(
             heroTag: 'import_novel',
             icon: const Icon(Icons.auto_stories_outlined),
             label: const Text('导入小说'),
-            onPressed: () async {
-              final res = await ref
-                  .read(pipelineControllerProvider.notifier)
-                  .importNovel();
-              if (!context.mounted) return;
-              if (res.error != null) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text(res.error!)));
-              } else if (res.projectId != null) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('小说已导入，正在提取人物与生成批注…')));
-                await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) =>
-                            ProcessingPage(projectId: res.projectId!)));
-              }
-            },
+            onPressed: () => _importNovels(context, ref),
           ),
         ],
       ),
