@@ -63,12 +63,26 @@ void main() {
         child: MaterialApp(home: child),
       );
 
+  /// drift watch 的 Timer.run 通知不产生帧，结束前冲一段假时间避免 pending timer。
+  Future<void> flush(WidgetTester tester) async {
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+  }
+
+  /// 卸载 widget 树并冲掉 drift markAsClosed 的零时长 Timer，
+  /// 否则 pending timer 断言失败且 db.close() 卡死。
+  Future<void> unmount(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  }
+
   testWidgets('卡片集：按项目分组渲染 + 不确定标记 + 搜索过滤', (tester) async {
     await seed();
     await tester.pumpWidget(wrap(const CardsPage()));
-    await tester.pumpAndSettle();
+    await flush(tester);
 
-    expect(find.text('卡片集（3）'), findsOneWidget);
+    expect(find.textContaining('卡片集（3）'), findsOneWidget);
     expect(find.text('潜伏'), findsOneWidget); // 分组头
     expect(find.text('军统'), findsOneWidget);
     expect(find.text('拜帖'), findsOneWidget);
@@ -78,16 +92,18 @@ void main() {
 
     // 搜索"军统" → 只剩命中卡片（搜索词本身也在输入框里匹配）
     await tester.enterText(find.byType(TextField), '军统');
-    await tester.pumpAndSettle();
+    await flush(tester);
     expect(find.text('军统'), findsWidgets);
     expect(find.text('锦衣卫'), findsNothing);
-    expect(find.text('卡片集（1）'), findsNothing); // 总数统计不随搜索变化
+    expect(find.textContaining('卡片集（1）'), findsNothing); // 总数统计不随搜索变化
+    await unmount(tester);
   });
 
   testWidgets('卡片集：空态', (tester) async {
     await tester.pumpWidget(wrap(const CardsPage()));
-    await tester.pumpAndSettle();
+    await flush(tester);
     expect(find.textContaining('还没有知识卡片'), findsOneWidget);
+    await unmount(tester);
   });
 
   test('连续答题天数计算', () {

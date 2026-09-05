@@ -167,4 +167,42 @@ void main() {
         ProjectPackage(db).importProject(bad, audioDir: audioDir),
         throwsException);
   });
+
+  test('v1 旧包（卡片行无 SRS 列）导入自动补默认值', () async {
+    final oldId = await seedVideo();
+    final pkg = ProjectPackage(db);
+    final zipFile = await pkg.exportProject(oldId,
+        outputDir: tmp.path, audioDir: audioDir);
+
+    // 把包内的 knowledge_cards 行改写成 v1 形态（去掉 SRS 键）
+    final rawZip = ZipDecoder().decodeBytes(zipFile.readAsBytesSync());
+    final dbJson = jsonDecode(utf8.decode(rawZip.findFile('db.json')!.content))
+        as Map<String, dynamic>;
+    final cardRow = (dbJson['knowledge_cards'] as List).first as Map;
+    for (final k in [
+      'dueAt',
+      'ivlDays',
+      'ease',
+      'reps',
+      'lapses',
+      'lastReviewAt'
+    ]) {
+      cardRow.remove(k);
+    }
+    final rebuilt = Archive()
+      ..addFile(ArchiveFile.string('manifest.json',
+          jsonEncode({'version': 1, 'projectTitle': '潜伏', 'type': 'video'})))
+      ..addFile(ArchiveFile.string('db.json', jsonEncode(dbJson)));
+    final v1Zip = File('${tmp.path}/v1.peixi.zip')
+      ..writeAsBytesSync(ZipEncoder().encode(rebuilt));
+    await (db.delete(db.projects)..where((t) => t.id.equals(oldId))).go();
+
+    await pkg.importProject(v1Zip, audioDir: audioDir);
+    final card = await db.select(db.knowledgeCards).getSingle();
+    expect(card.term, '军统');
+    expect(card.ease, 2.5, reason: 'v1 缺失的 SRS 列补默认值');
+    expect(card.ivlDays, 0.0);
+    expect(card.reps, 0);
+    expect(card.dueAt, isNull);
+  });
 }

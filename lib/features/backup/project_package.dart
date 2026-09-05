@@ -16,7 +16,8 @@ class ProjectPackage {
   ProjectPackage(this.db);
   final AppDatabase db;
 
-  static const version = 1;
+  /// v2：knowledge_cards 行含 SRS 调度列（v1 包导入时自动补默认值）。
+  static const version = 2;
 
   /// 构建包字节（UI 用 FilePicker.saveFile 自选位置）
   Future<({String fileName, List<int> bytes})> buildPackage(
@@ -209,6 +210,17 @@ class ProjectPackage {
       }
 
       for (final m in rows('knowledge_cards')) {
+        // v1 包没有 SRS 列；fromJson 对缺失的非空列会抛类型错误，先补默认值
+        for (final e in const {
+          'dueAt': null,
+          'ivlDays': 0.0,
+          'ease': 2.5,
+          'reps': 0,
+          'lapses': 0,
+          'lastReviewAt': null,
+        }.entries) {
+          m.putIfAbsent(e.key, () => e.value);
+        }
         final comp = KnowledgeCard.fromJson(m)
             .toCompanion(false)
             .copyWith(id: noId, projectId: Value(newProjectId));
