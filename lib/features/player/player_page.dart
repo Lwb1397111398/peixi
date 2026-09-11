@@ -10,11 +10,13 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/logging/crash_log.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/player/commentary_card.dart';
 import 'package:peixi/features/player/player_shortcuts.dart';
 import 'package:peixi/features/player/quiz_engine.dart';
 import 'package:peixi/features/player/quiz_overlay.dart';
 import 'package:peixi/features/player/scene_progress_bar.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/providers.dart';
 
 /// 视频播放器页（设计稿 8.2）：桌面左视频右解说栏；手机竖屏上视频下解说卡。
@@ -205,7 +207,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   @override
   Widget build(BuildContext context) {
     if (_project == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: LoadingView());
     }
     final quiz = _quizEngine;
     final scene = (_currentSceneIdx >= 0 && _currentSceneIdx < _scenes.length)
@@ -216,9 +218,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         : _cards.where((c) => c.firstSceneIdx == scene.idx).toList();
 
     final videoArea = Column(mainAxisSize: MainAxisSize.min, children: [
-      AspectRatio(
-        aspectRatio: 16 / 9,
-        child: Video(controller: _videoController),
+      // 视频区恒定黑底（letterbox），不随主题变化
+      Container(
+        color: Colors.black,
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Video(controller: _videoController),
+        ),
       ),
       SceneProgressBar(
         positionMs: _positionMs,
@@ -243,7 +249,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
 
     Widget body;
-    if (MediaQuery.of(context).size.width >= 900) {
+    if (MediaQuery.sizeOf(context).width >= kTwoPaneBreakpoint) {
       body = Row(children: [
         Expanded(child: videoArea),
         if (!_panelCollapsed) SizedBox(width: 380, child: commentaryArea),
@@ -287,7 +293,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 PopupMenuItem(value: r, child: Text('${r}x')),
             ],
           ),
-          if (MediaQuery.of(context).size.width >= 900)
+          if (MediaQuery.sizeOf(context).width >= kTwoPaneBreakpoint)
             IconButton(
               icon: const Icon(Icons.view_sidebar_outlined),
               tooltip: _panelCollapsed ? '展开解说栏' : '收起解说栏',

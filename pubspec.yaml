@@ -28,6 +28,7 @@ dependencies:
   xml: ^7.0.1
   window_manager: ^0.4.3
   desktop_drop: ^0.4.4
+  ffi: ^2.1.0
 
 dev_dependencies:
   flutter_test:

@@ -2,6 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/theme/tokens.dart';
+import 'package:peixi/ui/widgets/app_badge.dart';
+import 'package:peixi/ui/widgets/sheet_scaffold.dart';
 
 /// 解说卡（设计稿 8.2）：L1 常显 → L2 折叠（角色分条）→ L3 词条胶囊。
 /// [forceExpand] 为 true（手动暂停深读）时全展开。
@@ -26,55 +29,58 @@ class CommentaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
     final c = commentary;
     final l2 = _parseL2(c?.l2PsychologyJson);
 
     if (c == null) {
       return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Text('第 ${scene.idx + 1} 景 · 解说缺失（生成时失败，可重新处理）',
-            style: TextStyle(color: cs.outline)),
+        padding: const EdgeInsets.all(Space.l),
+        child: Row(children: [
+          Icon(Icons.info_outline, size: 15, color: cs.outline),
+          const SizedBox(width: Space.xs),
+          Expanded(
+            child: Text('第 ${scene.idx + 1} 景 · 解说缺失（生成时失败，可重新处理）',
+                style: tt.bodySmall),
+          ),
+        ]),
       );
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.l, Space.xs),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(children: [
-            if (scene.importance == 'high')
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4)),
-                child: const Text('关键场景',
-                    style: TextStyle(fontSize: 10, color: Colors.orange)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (scene.importance == 'high') ...[
+                const Padding(
+                  padding: EdgeInsets.only(top: 3),
+                  child: AppBadge('关键场景', tone: BadgeTone.warning),
+                ),
+                const SizedBox(width: Space.s),
+              ],
+              Expanded(
+                child: Text(
+                  scene.summary ?? '第 ${scene.idx + 1} 景',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.titleMedium,
+                ),
               ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                scene.summary ?? '第 ${scene.idx + 1} 景',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: cs.onSurface),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 10),
+            ],
+          ),
+          const SizedBox(height: Space.s),
           _Section(
             icon: Icons.visibility_outlined,
             label: 'L1 潜台词',
             color: cs.primary,
             initiallyExpanded: true, // L1 常显（设计稿 8.2）
             child: Text(c.l1Subtext,
-                style: const TextStyle(fontSize: 13, height: 1.5)),
+                style: tt.bodyLarge!.copyWith(height: 1.65)),
           ),
           _Section(
             icon: Icons.psychology_outlined,
@@ -82,40 +88,40 @@ class CommentaryCard extends StatelessWidget {
             color: cs.tertiary,
             initiallyExpanded: forceExpand,
             child: l2.isEmpty
-                ? const Text('（本场景无心理分析）',
-                    style: TextStyle(fontSize: 12))
+                ? Text('（本场景无心理分析）', style: tt.bodySmall)
                 : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       for (final e in l2)
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.only(bottom: Space.s),
                           child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(
-                                  margin: const EdgeInsets.only(top: 3),
-                                  width: 8,
-                                  height: 8,
+                                  margin: const EdgeInsets.only(top: 7),
+                                  width: 7,
+                                  height: 7,
                                   decoration: BoxDecoration(
                                       color: colorByName[e['character']
                                               .toString()] ??
                                           cs.tertiary,
                                       shape: BoxShape.circle),
                                 ),
-                                const SizedBox(width: 6),
+                                const SizedBox(width: Space.s),
                                 Expanded(
                                   child: Text.rich(
                                     TextSpan(children: [
                                       TextSpan(
                                           text: '${e['character']}　',
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.w600)),
-                                      TextSpan(text: e['analysis'].toString()),
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              color: cs.onSurface)),
+                                      TextSpan(
+                                          text: e['analysis'].toString()),
                                     ]),
-                                    style: TextStyle(
-                                        fontSize: 12.5,
-                                        height: 1.5,
-                                        color: cs.onSurfaceVariant),
+                                    style: tt.bodyMedium!
+                                        .copyWith(height: 1.55),
                                   ),
                                 ),
                               ]),
@@ -130,13 +136,13 @@ class CommentaryCard extends StatelessWidget {
               color: cs.secondary,
               initiallyExpanded: forceExpand,
               child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
+                spacing: Space.s,
+                runSpacing: Space.s,
                 children: [
                   for (final card in cards)
                     ActionChip(
                       avatar: seenCardIds.contains(card.id)
-                          ? const Icon(Icons.check, size: 14)
+                          ? Icon(Icons.check, size: 14, color: cs.primary)
                           : null,
                       label: Text(card.term),
                       onPressed: () => _openCard(context, card),
@@ -150,35 +156,43 @@ class CommentaryCard extends StatelessWidget {
   }
 
   void _openCard(BuildContext context, KnowledgeCard card) {
+    // 用捕获的主题（播放器语境）包住路由级面板，保证明暗一致
+    final theme = Theme.of(context);
+    final semantic = context.semanticColors;
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(card.title,
-                style: Theme.of(ctx)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            if (card.uncertain)
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6)),
-                child: const Text('AI 对此词条把握不大，仅供参考',
-                    style: TextStyle(fontSize: 11, color: Colors.orange)),
-              ),
-            Text(card.content.isEmpty ? '（暂无内容）' : card.content,
-                style: const TextStyle(fontSize: 14, height: 1.7)),
-          ],
+      isScrollControlled: true,
+      builder: (ctx) => Theme(
+        data: theme,
+        child: SheetScaffold(
+          title: card.title,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                Space.xl, Space.m, Space.xl, Space.xl),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (card.uncertain) ...[
+                  Row(children: [
+                    Icon(Icons.help_outline,
+                        size: 14, color: semantic.warning),
+                    const SizedBox(width: Space.xs),
+                    Text('AI 对此词条把握不大，仅供参考',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: semantic.warning)),
+                  ]),
+                  const SizedBox(height: Space.m),
+                ],
+                Text(card.content.isEmpty ? '（暂无内容）' : card.content,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyLarge!
+                        .copyWith(height: 1.7)),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -225,31 +239,41 @@ class _SectionState extends State<_Section> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: () => setState(() => _expanded = !_expanded),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(children: [
-            Icon(widget.icon, size: 14, color: widget.color),
-            const SizedBox(width: 4),
-            Text(widget.label,
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: widget.color)),
-            const SizedBox(width: 2),
-            Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                size: 14, color: widget.color),
-          ]),
-        ),
-      ),
-      if (_expanded)
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 8),
-          child: widget.child,
-        ),
-    ]);
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: AppRadius.rSm,
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: Space.s),
+              child: Row(children: [
+                Icon(widget.icon, size: 14, color: widget.color),
+                const SizedBox(width: Space.xs),
+                Text(widget.label,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelMedium!
+                        .copyWith(color: widget.color)),
+                const SizedBox(width: Space.xs),
+                Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 15, color: widget.color),
+              ]),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 200),
+            sizeCurve: Curves.easeOutCubic,
+            crossFadeState: _expanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            firstChild: Padding(
+              padding: const EdgeInsets.only(left: Space.l, bottom: Space.m),
+              child: widget.child,
+            ),
+            secondChild: const SizedBox(width: double.infinity),
+          ),
+        ]);
   }
 }

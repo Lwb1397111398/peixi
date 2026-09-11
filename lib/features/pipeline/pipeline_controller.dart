@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/asr_model_controller.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
@@ -86,6 +87,15 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       audioDir: await audioDir(),
       localAsr: (audioPath) async {
         final modelDir = await LocalAsrClient.defaultLocalModelDir();
+        if (!LocalAsrClient(modelDir: modelDir).isReady) {
+          // 手机端无法跑下载脚本：缺模型时应用内自动补齐（失败则本阶段报错）
+          final ok = await ref.read(asrModelStateProvider.notifier).download();
+          if (!ok) {
+            final st = ref.read(asrModelStateProvider);
+            throw AsrException('本地 ASR 模型自动下载失败：${st.error ?? '未知原因'}'
+                '。可在设置 → 语音识别（ASR）中手动重试。');
+          }
+        }
         return LocalAsrClient.recognizeInBackground(
             modelDir: modelDir, audioPath: audioPath);
       },

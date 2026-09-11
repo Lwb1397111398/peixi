@@ -4,6 +4,10 @@ import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/theme/tokens.dart';
+import 'package:peixi/ui/widgets/empty_state.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
+import 'package:peixi/ui/widgets/page_header.dart';
 import 'package:peixi/providers.dart';
 
 /// 复盘页（设计稿 8.5）：qa_records 时间线（我的回答 vs 参考视角），
@@ -79,98 +83,110 @@ class _ReviewPageState extends ConsumerState<ReviewPage> {
     final streak = streakDays(_entries.map((e) => e.answer.answeredAt));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('复盘')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Row(children: [
-                  _statChip('已答', answered, Colors.green),
-                  const SizedBox(width: 8),
-                  _statChip('跳过', skipped, Colors.grey),
-                  const SizedBox(width: 8),
-                  _statChip('连续答题', streak, Colors.blue, suffix: '天'),
-                ]),
-              ),
-              Expanded(
-                child: _entries.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.fact_check_outlined,
-                                size: 64, color: Colors.grey.shade600),
-                            const SizedBox(height: 8),
-                            const Text('还没有答题记录'),
-                            const Text('在播放器或阅读器里完成 L4 提问后会出现在这里'),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _entries.length,
-                        itemBuilder: (_, i) => _entryCard(_entries[i]),
-                      ),
-              ),
+          ? const LoadingView()
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+          const PageHeader(
+            title: '复盘',
+            subtitle: '你在弹题里的每个回答，都是温故知新的素材',
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                Space.xl, 0, Space.xl, Space.m),
+            child: Row(children: [
+              _statChip('已答', answered, context.semanticColors.success),
+              const SizedBox(width: Space.s),
+              _statChip('跳过', skipped,
+                  Theme.of(context).colorScheme.onSurfaceVariant),
+              const SizedBox(width: Space.s),
+              _statChip('连续答题', streak, context.semanticColors.info,
+                  suffix: '天'),
             ]),
+          ),
+          Expanded(
+            child: _entries.isEmpty
+                ? EmptyState(
+                    icon: Icons.fact_check_outlined,
+                    title: '还没有答题记录',
+                    message: '在播放器或阅读器里完成 L4 提问后会出现在这里',
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(
+                        Space.xl, 0, Space.xl, Space.xl),
+                    itemCount: _entries.length,
+                    itemBuilder: (_, i) => _entryCard(_entries[i]),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _statChip(String label, int value, Color color, {String suffix = ''}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(
+          horizontal: Space.m, vertical: Space.s),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text('$label $value$suffix',
-          style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+          style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 12.5)),
     );
   }
 
   Widget _entryCard(_ReviewEntry e) {
+    final semantic = context.semanticColors;
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: Space.m),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(Space.l),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(
                 child: Text(e.question.question,
-                    style: const TextStyle(fontWeight: FontWeight.w600))),
+                    style: tt.titleMedium)),
           ]),
-          const SizedBox(height: 6),
+          const SizedBox(height: Space.s),
           Row(children: [
             Icon(
                 e.answer.skipped ? Icons.skip_next : Icons.check_circle,
-                size: 14,
-                color: e.answer.skipped ? Colors.grey : Colors.green),
-            const SizedBox(width: 4),
+                size: 15,
+                color: e.answer.skipped
+                    ? cs.onSurfaceVariant
+                    : semantic.success),
+            const SizedBox(width: Space.xs),
             Expanded(
               child: Text(
                 e.answer.skipped ? '已跳过' : '我的回答：${e.answer.userAnswer}',
-                style: TextStyle(
-                    fontSize: 13,
-                    color: e.answer.skipped ? Colors.grey : null),
+                style: tt.bodyMedium!.copyWith(
+                    color: e.answer.skipped ? cs.onSurfaceVariant : null),
               ),
             ),
           ]),
           if (e.perspectives.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: Space.s),
             Text('参考视角',
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary)),
+                style: tt.labelLarge!.copyWith(color: cs.primary)),
+            const SizedBox(height: Space.xs),
             for (final p in e.perspectives)
-              Text('• $p', style: const TextStyle(fontSize: 13)),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text('• $p', style: tt.bodyMedium),
+              ),
           ],
-          const SizedBox(height: 6),
+          const SizedBox(height: Space.s),
           Text(
             '${e.projectTitle}${e.projectTitle.isEmpty ? '' : ' · '}'
             '${_formatTime(e.answer.answeredAt)}',
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+            style: tt.bodySmall,
           ),
         ]),
       ),

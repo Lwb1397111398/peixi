@@ -71,8 +71,8 @@ class LocalAsrClient {
   Future<NormalizedAsr> recognize(String audioPath) async {
     if (!isReady) {
       throw AsrException(
-          '本地 ASR 模型缺失（$modelDir）。请运行 tool/download-sherpa-model.sh 下载模型，'
-          '并将 models/asr 目录放到应用支持目录（或 Windows exe 同级目录）。');
+          '本地 ASR 模型缺失（$modelDir）。请在 设置 → 语音识别（ASR） 中点击"下载模型"，'
+          '或运行 tool/download-sherpa-model.sh 后将 models/asr 放到模型目录。');
     }
     _ensureBindings(); // readWave 也走原生绑定，须在加载音频前初始化
     final wave = loadWave(audioPath);

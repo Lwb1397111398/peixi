@@ -4,13 +4,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/reader/reader.dart';
+import 'package:peixi/ui/widgets/app_badge.dart';
+import 'package:peixi/ui/widgets/empty_state.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
+import 'package:peixi/ui/widgets/sheet_scaffold.dart';
 import 'package:peixi/providers.dart';
 
 /// 小说阅读器（设计稿 8.4）：
 /// 正文纵向滚动（字号/行距/背景可调含夜间）；段落尾部 L1-L4 彩色气泡角标，
 /// 点击弹底部卡片；L4 为段间展开卡片（作答/跳过写 qa_records）；
 /// 顶部章节抽屉；右上本书人物列表（点击看人设）。
+/// 书页三主题（paper/sepia/night）是用户可配置项，色值为既有持久化数据，
+/// 不随全局主题变化；页头与抽屉随书页色调适配（"暗壳亮页"反之亦然）。
 class ReaderPage extends ConsumerStatefulWidget {
   const ReaderPage({super.key, required this.projectId});
   final int projectId;
@@ -40,6 +47,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   final _l4Controllers = <int, TextEditingController>{};
   final _l4Answered = <int, String?>{}; // null=未作答，''=跳过
 
+  // 书页三主题（既有持久化语义，色值与旧版一致）
   static const _bgColors = {
     ReaderTheme.paper: Color(0xFFFAFAF5),
     ReaderTheme.sepia: Color(0xFFF5EDDC),
@@ -126,6 +134,17 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       key: _scaffoldKey,
       backgroundColor: bg,
       appBar: AppBar(
+        backgroundColor: bg,
+        foregroundColor: fg,
+        titleTextStyle: Theme.of(context)
+            .textTheme
+            .titleLarge!
+            .copyWith(color: fg),
+        iconTheme: IconThemeData(color: fg.withValues(alpha: 0.75)),
+        actionsIconTheme: IconThemeData(color: fg.withValues(alpha: 0.75)),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         title: Text(
           _chapters.isEmpty
               ? '阅读器'
@@ -145,11 +164,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               onPressed: _showPrefsSheet),
         ],
       ),
-      drawer: _buildChapterDrawer(fg),
+      drawer: _buildChapterDrawer(fg, bg),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingView()
           : _chapters.isEmpty
-              ? const Center(child: Text('本书没有章节'))
+              ? EmptyState(
+                  icon: Icons.menu_book_outlined,
+                  title: '本书没有章节',
+                  message: '重新导入这本小说可能可以修复；已有批注与卡片不受影响。',
+                )
               : NotificationListener<ScrollEndNotification>(
                   onNotification: (_) {
                     _persistProgress();
@@ -157,7 +180,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                   },
                   child: ListView.builder(
                     controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 48),
+                    padding: const EdgeInsets.fromLTRB(
+                        Space.xl, Space.m, Space.xl, Space.xxl + Space.xl),
                     itemCount: _paragraphs.length,
                     itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
                   ),
@@ -165,10 +189,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     );
   }
 
-  Widget _buildChapterDrawer(Color fg) {
+  Widget _buildChapterDrawer(Color fg, Color bg) {
     return Drawer(
+      backgroundColor: bg,
       child: SafeArea(
         child: ListView.builder(
+          padding: const EdgeInsets.symmetric(
+              horizontal: Space.s, vertical: Space.m),
           itemCount: _chapters.length,
           itemBuilder: (_, i) {
             final ch = _chapters[i];
@@ -176,6 +203,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
             final isLastRead = i == _lastReadingChapterIdx;
             return ListTile(
               selected: selected,
+              shape: RoundedRectangleBorder(borderRadius: AppRadius.rMd),
               title: Text(
                 ch.title ?? '第${i + 1}部分',
                 maxLines: 1,
@@ -185,7 +213,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               trailing: isLastRead && !selected
                   ? Text('上次读到',
                       style: TextStyle(
-                          fontSize: 11, color: fg.withValues(alpha: 0.6)))
+                          fontSize: 11,
+                          color: fg.withValues(alpha: 0.55)))
                   : null,
               onTap: () {
                 Navigator.pop(context); // 关抽屉
@@ -217,24 +246,25 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               color: fg),
         ),
         if (bubbles.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Wrap(spacing: 6, children: bubbles),
+          const SizedBox(height: Space.xs),
+          Wrap(spacing: Space.s, runSpacing: Space.xs, children: bubbles),
         ],
         for (final a in l4) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: Space.m),
           _l4Card(a, fg),
         ],
-        const SizedBox(height: 18),
+        const SizedBox(height: Space.l),
       ],
     );
   }
 
+  // L1-L4 层级色：柔和版（书页亮暗两态都可读），与全局语义色分离
   Color _annColor(String type) => switch (type) {
-        'L1' => const Color(0xFF4FC3F7), // 蓝 潜台词
-        'L2' => const Color(0xFFBA68C8), // 紫 心理
-        'L3' => const Color(0xFF66BB6A), // 绿 知识
-        'L4' => const Color(0xFFFFB74D), // 橙 思考题
-        _ => Colors.grey,
+        'L1' => const Color(0xFF5A8FC2), // 蓝 潜台词
+        'L2' => const Color(0xFF9B7DC0), // 紫 心理
+        'L3' => const Color(0xFF6FA470), // 绿 知识
+        'L4' => const Color(0xFFC98A4B), // 琥珀 思考题
+        _ => const Color(0xFF8B9083),
       };
 
   String _annLabel(String type) => switch (type) {
@@ -250,69 +280,59 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       key: ValueKey('bubble-${a.id}'),
       onTap: () => _showAnnotationSheet(a),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: Space.s, vertical: 2),
         decoration: BoxDecoration(
-            color: _annColor(a.type).withValues(alpha: 0.85),
-            borderRadius: BorderRadius.circular(10)),
+            color: _annColor(a.type),
+            borderRadius: BorderRadius.circular(999)),
         child: Text(a.type,
             style: const TextStyle(
                 color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold)),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600)),
       ),
     );
   }
 
   void _showAnnotationSheet(Annotation a) {
+    final color = _annColor(a.type);
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
-      builder: (sheetCtx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Icon(Icons.label_important, size: 16, color: _annColor(a.type)),
-                const SizedBox(width: 6),
-                Text(_annLabel(a.type),
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                const Spacer(),
-                TextButton(
-                    onPressed: () => Navigator.pop(sheetCtx),
-                    child: const Text('关闭')),
-              ]),
-              const SizedBox(height: 8),
-              _annotationBody(a),
-            ],
-          ),
+      isScrollControlled: true,
+      builder: (sheetCtx) => SheetScaffold(
+        title: _annLabel(a.type),
+        actions: [
+          Icon(Icons.label_important, size: 18, color: color),
+          const SizedBox(width: Space.xs),
+          TextButton(
+              onPressed: () => Navigator.pop(sheetCtx),
+              child: const Text('关闭')),
+        ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+              Space.xl, Space.m, Space.xl, Space.xl),
+          child: _annotationBody(a),
         ),
       ),
     );
   }
 
   Widget _annotationBody(Annotation a) {
+    final tt = Theme.of(context).textTheme;
     switch (a.type) {
       case 'L1':
       case 'L2':
         final text = decodeL1L2(a.contentJson) ?? '（批注内容为空）';
-        return Text(text);
+        return Text(text, style: tt.bodyLarge!.copyWith(height: 1.7));
       case 'L3':
         final c = decodeL3(a.contentJson);
         if (c == null) return const Text('（批注内容为空）');
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(c.term,
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(c.text),
+          Text(c.term, style: tt.titleLarge),
+          const SizedBox(height: Space.xs),
+          Text(c.text, style: tt.bodyLarge!.copyWith(height: 1.7)),
           if (c.uncertain) ...[
-            const SizedBox(height: 6),
-            Chip(
-                label: const Text('不确定，仅供参考'),
-                backgroundColor: Colors.orange.shade100),
+            const SizedBox(height: Space.m),
+            const AppBadge('不确定，仅供参考', tone: BadgeTone.warning),
           ],
         ]);
       default:
@@ -325,72 +345,75 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     if (c == null) return const SizedBox.shrink();
     final answered = _l4Answered.containsKey(a.id);
     final controller = _l4Controllers.putIfAbsent(a.id, TextEditingController.new);
+    final l4Color = _annColor('L4');
+    final tt = Theme.of(context).textTheme;
 
-    return Card(
-      color: _annColor('L4').withValues(alpha: 0.12),
-      elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Icon(Icons.psychology, size: 16, color: _annColor('L4')),
-              const SizedBox(width: 6),
-              Text('L4 思考题',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: _annColor('L4'))),
+    return Container(
+      padding: const EdgeInsets.all(Space.l),
+      decoration: BoxDecoration(
+        color: l4Color.withValues(alpha: 0.10),
+        borderRadius: AppRadius.rMd,
+        border: Border.all(color: l4Color.withValues(alpha: 0.38)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.psychology_outlined, size: 16, color: l4Color),
+            const SizedBox(width: Space.xs),
+            Text('L4 思考题',
+                style: tt.labelLarge!.copyWith(color: l4Color)),
+          ]),
+          const SizedBox(height: Space.s),
+          Text(c.question,
+              style: TextStyle(
+                  fontSize: _prefs.fontSize,
+                  fontWeight: FontWeight.w600,
+                  height: _prefs.lineHeight * 0.9,
+                  color: fg)),
+          const SizedBox(height: Space.m),
+          if (!answered) ...[
+            TextField(
+              controller: controller,
+              minLines: 2,
+              maxLines: 4,
+              decoration:
+                  const InputDecoration(hintText: '写下你的想法…（可留空跳过）'),
+            ),
+            const SizedBox(height: Space.s),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              TextButton(
+                  onPressed: () => _submitAnswer(a, c.perspectives, null),
+                  child: const Text('跳过本题')),
+              const SizedBox(width: Space.s),
+              FilledButton(
+                  onPressed: () => _submitAnswer(
+                      a, c.perspectives, controller.text.trim()),
+                  child: const Text('提交回答')),
             ]),
-            const SizedBox(height: 8),
-            Text(c.question,
-                style: TextStyle(
-                    fontSize: _prefs.fontSize, fontWeight: FontWeight.w600, color: fg)),
-            const SizedBox(height: 10),
-            if (!answered) ...[
-              TextField(
-                controller: controller,
-                minLines: 2,
-                maxLines: 4,
-                decoration:
-                    const InputDecoration(hintText: '写下你的想法…（可留空跳过）'),
+          ] else ...[
+            if (_l4Answered[a.id] == '')
+              Text('已跳过',
+                  style: tt.bodySmall!
+                      .copyWith(color: fg.withValues(alpha: 0.6)))
+            else
+              Text('我的回答：${_l4Answered[a.id]}',
+                  style: tt.bodyMedium!.copyWith(color: fg)),
+            const SizedBox(height: Space.m),
+            Text('参考视角',
+                style: tt.labelLarge!.copyWith(color: l4Color)),
+            const SizedBox(height: Space.xs),
+            for (final p in c.perspectives)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text('• $p',
+                    style: TextStyle(
+                        fontSize: _prefs.fontSize - 1,
+                        height: 1.6,
+                        color: fg)),
               ),
-              const SizedBox(height: 8),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                TextButton(
-                    onPressed: () => _submitAnswer(a, c.perspectives, null),
-                    child: const Text('跳过本题')),
-                const SizedBox(width: 8),
-                FilledButton(
-                    onPressed: () => _submitAnswer(
-                        a, c.perspectives, controller.text.trim()),
-                    child: const Text('提交回答')),
-              ]),
-            ] else ...[
-              if (_l4Answered[a.id] == '')
-                Text('已跳过',
-                    style: TextStyle(fontSize: 12, color: fg.withValues(alpha: 0.6)))
-              else
-                Text('我的回答：${_l4Answered[a.id]}',
-                    style: TextStyle(fontSize: 13, color: fg)),
-              const SizedBox(height: 10),
-              Text('参考视角',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: _annColor('L4'))),
-              const SizedBox(height: 4),
-              for (final p in c.perspectives)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Text('• $p',
-                      style: TextStyle(fontSize: 14, color: fg)),
-                ),
-            ],
           ],
-        ),
+        ],
       ),
     );
   }
@@ -411,60 +434,36 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   void _showPrefsSheet() {
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetCtx) => StatefulBuilder(builder: (ctx, setSheet) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Row(children: [
-                const Text('阅读设置',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('完成')),
-              ]),
-              Row(children: [
-                const Text('字号'),
-                Expanded(
-                  child: Slider(
-                    min: 14,
-                    max: 24,
-                    divisions: 10,
-                    label: _prefs.fontSize.round().toString(),
-                    value: _prefs.fontSize,
-                    onChanged: (v) {
-                      setSheet(() {});
-                      _updatePrefs(ReaderPrefs(
-                          fontSize: v,
-                          lineHeight: _prefs.lineHeight,
-                          theme: _prefs.theme));
-                    },
-                  ),
-                ),
-              ]),
-              Row(children: [
-                const Text('行距'),
-                Expanded(
-                  child: Slider(
-                    min: 1.2,
-                    max: 2.2,
-                    divisions: 10,
-                    label: _prefs.lineHeight.toStringAsFixed(1),
-                    value: _prefs.lineHeight,
-                    onChanged: (v) {
-                      setSheet(() {});
-                      _updatePrefs(ReaderPrefs(
-                          fontSize: _prefs.fontSize,
-                          lineHeight: v,
-                          theme: _prefs.theme));
-                    },
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 8),
+        return SheetScaffold(
+          title: '阅读设置',
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('完成')),
+          ],
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                Space.xl, Space.m, Space.xl, Space.xl),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _sliderRow('字号', _prefs.fontSize, 14, 24, 10,
+                  _prefs.fontSize.round().toString(), (v) {
+                setSheet(() {});
+                _updatePrefs(ReaderPrefs(
+                    fontSize: v,
+                    lineHeight: _prefs.lineHeight,
+                    theme: _prefs.theme));
+              }),
+              _sliderRow('行距', _prefs.lineHeight, 1.2, 2.2, 10,
+                  _prefs.lineHeight.toStringAsFixed(1), (v) {
+                setSheet(() {});
+                _updatePrefs(ReaderPrefs(
+                    fontSize: _prefs.fontSize,
+                    lineHeight: v,
+                    theme: _prefs.theme));
+              }),
+              const SizedBox(height: Space.s),
               SegmentedButton<ReaderTheme>(
                 segments: const [
                   ButtonSegment(
@@ -490,46 +489,77 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     );
   }
 
+  Widget _sliderRow(String label, double value, double min, double max,
+      int divisions, String labelValue, ValueChanged<double> onChanged) {
+    final tt = Theme.of(context).textTheme;
+    return Row(children: [
+      SizedBox(
+          width: 32,
+          child: Text(label, style: tt.bodyMedium)),
+      Expanded(
+        child: Slider(
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: labelValue,
+          value: value,
+          onChanged: onChanged,
+        ),
+      ),
+    ]);
+  }
+
   void _showCastSheet() {
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
-      builder: (sheetCtx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: [
-              const Text('本书人物',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              TextButton(
-                  onPressed: () => Navigator.pop(sheetCtx),
-                  child: const Text('关闭')),
-            ]),
-            const SizedBox(height: 4),
-            if (_cast.isEmpty)
-              const Padding(
-                  padding: EdgeInsets.all(12), child: Text('暂无人物信息')),
-            for (final c in _cast)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                leading: CircleAvatar(
-                    radius: 14,
-                    child: Text(c.name.isEmpty ? '?' : c.name[0])),
-                title: Text(c.name),
-                subtitle: Text(
-                  c.aliasesJson.isEmpty ||
-                          c.aliasesJson == '[]'
-                      ? '（暂无人设）'
-                      : c.aliasesJson,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+      isScrollControlled: true,
+      builder: (sheetCtx) => SheetScaffold(
+        title: '本书人物',
+        child: _cast.isEmpty
+            ? Padding(
+                padding: const EdgeInsets.all(Space.xl),
+                child: Text('暂无人物信息',
+                    style: Theme.of(sheetCtx).textTheme.bodySmall))
+            : ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(
+                    Space.m, Space.s, Space.m, Space.xl),
+                children: [
+                  for (final c in _cast)
+                    ListTile(
+                      shape: RoundedRectangleBorder(borderRadius: AppRadius.rMd),
+                      leading: CircleAvatar(
+                        radius: 15,
+                        backgroundColor: _characterColor(c.color),
+                        foregroundColor: Colors.white,
+                        child: Text(c.name.isEmpty ? '?' : c.name[0],
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600)),
+                      ),
+                      title: Text(c.name),
+                      subtitle: Text(
+                        c.aliasesJson.isEmpty ||
+                                c.aliasesJson == '[]'
+                            ? '（暂无人设）'
+                            : c.aliasesJson,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               ),
-          ]),
-        ),
       ),
     );
+  }
+
+  /// 角色色为校准页写库的 hex（存量数据），缺省回主色
+  Color _characterColor(String? hex) {
+    final raw = (hex ?? '').replaceFirst('#', '');
+    if (raw.length == 6 || raw.length == 8) {
+      final v = int.tryParse(raw, radix: 16);
+      if (v != null) return Color(raw.length == 6 ? 0xFF000000 | v : v);
+    }
+    return const Color(0xFF5E7F63);
   }
 }

@@ -1,23 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 import 'package:peixi/features/player/player_page.dart';
 import 'package:peixi/features/reader/reader_page.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/providers.dart';
 
-/// 处理详情页：阶段时间线 + 进度 + 失败重试。
+/// 处理详情页：阶段竖向时间线 + 进度 + 失败重试。
 /// 处理期间保持屏幕唤醒（设计稿九.4）由 PipelineController 统一管理。
 class ProcessingPage extends ConsumerWidget {
   const ProcessingPage({super.key, required this.projectId});
   final int projectId;
 
   static const _videoStages = [
-    ('subtitle', '字幕提取（可选加速）'),
-    ('audio', '音频抽取 16kHz 单声道'),
+    ('subtitle', '字幕提取'),
+    ('audio', '音频抽取'),
     ('upload', '上传 OSS 中转'),
-    ('asr', '语音识别 paraformer-v2'),
+    ('asr', '语音识别'),
     ('map', '角色映射'),
     ('calibration', '人工校准'),
     ('segment', '场景切分'),
@@ -58,7 +60,7 @@ class ProcessingPage extends ConsumerWidget {
         future: projectFuture,
         builder: (context, snap) {
           if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            return const LoadingView();
           }
           final p = snap.data!;
           final status = ProjectStatus.fromDb(p.status);
@@ -66,59 +68,105 @@ class ProcessingPage extends ConsumerWidget {
           final busy = state?.busy ?? false;
           final isNovel = p.type == 'novel';
           final stages = isNovel ? _novelStages : _videoStages;
+          final semantic = context.semanticColors;
+          final tt = Theme.of(context).textTheme;
 
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(
+                Space.xl, Space.l, Space.xl, Space.xxl),
             children: [
-              Text(p.title,
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 4),
-              Text(_subtitleText(p),
-                  style: Theme.of(context).textTheme.bodySmall),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p.title, style: tt.headlineSmall),
+                        const SizedBox(height: Space.xs),
+                        Text(_subtitleText(p), style: tt.bodySmall),
+                      ],
+                    ),
+                  ),
+                  if (busy)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child:
+                            CircularProgressIndicator(strokeWidth: 2.2),
+                      ),
+                    ),
+                ],
+              ),
               if (busy) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: Space.l),
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: Space.l, vertical: Space.m),
                   decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8)),
-                  child: const Row(children: [
-                    Icon(Icons.bolt, color: Colors.orange, size: 18),
-                    SizedBox(width: 8),
+                      color: semantic.infoBg,
+                      borderRadius: AppRadius.rMd),
+                  child: Row(children: [
+                    Icon(Icons.bolt, color: semantic.info, size: 17),
+                    const SizedBox(width: Space.s),
                     Expanded(
                         child: Text('处理中请勿关闭应用（屏幕将保持唤醒）',
-                            style: TextStyle(fontSize: 13))),
+                            style: tt.bodyMedium)),
                   ]),
                 ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.cancel_outlined),
-                  label: const Text('取消处理'),
-                  onPressed: () => ref
-                      .read(pipelineControllerProvider.notifier)
-                      .cancel(projectId),
+                const SizedBox(height: Space.s),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.cancel_outlined, size: 17),
+                    label: const Text('取消处理'),
+                    onPressed: () => ref
+                        .read(pipelineControllerProvider.notifier)
+                        .cancel(projectId),
+                  ),
                 ),
               ],
               if (state?.progress != null) ...[
-                const SizedBox(height: 12),
-                LinearProgressIndicator(value: state!.progress, minHeight: 8),
+                const SizedBox(height: Space.l),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                      value: state!.progress, minHeight: 5),
+                ),
               ],
               if (state?.detail != null) ...[
-                const SizedBox(height: 8),
-                Text(state!.detail!,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey.shade400)),
+                const SizedBox(height: Space.xs),
+                Text(state!.detail!, style: tt.bodySmall),
               ],
-              const SizedBox(height: 16),
-              ...stages.map((s) => _stageTile(s.$1, s.$2, status, state,
-                  failedStage, isNovel)),
+              const SizedBox(height: Space.xl),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      Space.xl, Space.l, Space.xl, Space.xs),
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < stages.length; i++)
+                        _stageRow(
+                          context,
+                          stages[i].$1,
+                          stages[i].$2,
+                          status,
+                          state,
+                          failedStage,
+                          isNovel,
+                          isLast: i == stages.length - 1,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
               if (status == ProjectStatus.failed)
                 Padding(
-                  padding: const EdgeInsets.only(top: 16),
+                  padding: const EdgeInsets.only(top: Space.l),
                   child: FilledButton.icon(
-                    icon: const Icon(Icons.refresh),
+                    icon: const Icon(Icons.refresh, size: 17),
                     label: Text('重试「${_failedStageLabel(p)}」'),
                     onPressed: () => ref
                         .read(pipelineControllerProvider.notifier)
@@ -127,7 +175,7 @@ class ProcessingPage extends ConsumerWidget {
                 ),
               if (status == ProjectStatus.ready && !busy)
                 Padding(
-                  padding: const EdgeInsets.only(top: 16),
+                  padding: const EdgeInsets.only(top: Space.l),
                   child: FilledButton.icon(
                     icon: Icon(isNovel
                         ? Icons.auto_stories_outlined
@@ -145,9 +193,9 @@ class ProcessingPage extends ConsumerWidget {
                 )
               else if (!busy && _resumable.contains(status))
                 Padding(
-                  padding: const EdgeInsets.only(top: 16),
+                  padding: const EdgeInsets.only(top: Space.l),
                   child: FilledButton.tonalIcon(
-                    icon: const Icon(Icons.play_arrow_outlined),
+                    icon: const Icon(Icons.play_arrow_outlined, size: 18),
                     label: const Text('继续处理'),
                     onPressed: () => ref
                         .read(pipelineControllerProvider.notifier)
@@ -175,9 +223,19 @@ class ProcessingPage extends ConsumerWidget {
     return stageLabel(stage);
   }
 
-  Widget _stageTile(String key, String label, ProjectStatus status,
-      PipelineState? state, String? failedStage,
-      [bool isNovel = false]) {
+  /// 竖向时间线一行：左侧节点+连线，右侧标签与状态提示
+  Widget _stageRow(
+      BuildContext context,
+      String key,
+      String label,
+      ProjectStatus status,
+      PipelineState? state,
+      String? failedStage,
+      bool isNovel,
+      {required bool isLast}) {
+    final semantic = context.semanticColors;
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
     final reached =
         _stageReached(key, status, failedStage, isNovel: isNovel);
     final active = state?.busy == true && state?.stage == key;
@@ -185,32 +243,107 @@ class ProcessingPage extends ConsumerWidget {
     final waitingGate =
         key == 'calibration' && status == ProjectStatus.waitCalibration;
 
-    IconData icon;
-    Color color;
+    // 节点与连线颜色：已完成/失败/激活/闸门/待处理
+    final nodeColor = failed
+        ? semantic.error
+        : waitingGate
+            ? semantic.warning
+            : active
+                ? cs.primary
+                : reached
+                    ? semantic.success
+                    : cs.outlineVariant;
+    final lineColor = reached && !failed ? semantic.success : cs.outlineVariant;
+    final labelColor = failed
+        ? semantic.error
+        : active
+            ? cs.onSurface
+            : reached
+                ? cs.onSurface
+                : cs.onSurfaceVariant;
+
+    Widget node;
     if (failed) {
-      icon = Icons.error_outline;
-      color = Colors.red;
+      node = Icon(Icons.error_outline, size: 20, color: nodeColor);
     } else if (waitingGate) {
-      icon = Icons.pan_tool_alt_outlined;
-      color = Colors.orange;
-    } else if (active) {
-      icon = Icons.sync;
-      color = Colors.blue;
+      node = Icon(Icons.pan_tool_alt_outlined, size: 19, color: nodeColor);
     } else if (reached) {
-      icon = Icons.check_circle_outline;
-      color = Colors.green;
+      node = Icon(Icons.check_circle, size: 19, color: nodeColor);
+    } else if (active) {
+      node = Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: cs.surfaceContainerLowest,
+          border: Border.all(color: nodeColor, width: 2.5),
+        ),
+      );
     } else {
-      icon = Icons.circle_outlined;
-      color = Colors.grey;
+      node = Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: nodeColor, width: 1.8),
+        ),
+      );
     }
 
-    return ListTile(
-      dense: true,
-      leading: Icon(icon, color: color),
-      title: Text(label),
-      subtitle: active && state?.progress != null
-          ? Text('${(state!.progress! * 100).toStringAsFixed(0)}%')
-          : (waitingGate ? const Text('请在项目卡片上进入校准') : null),
+    final hint = failed
+        ? '处理失败，可重试该阶段'
+        : waitingGate
+            ? '请回到媒体库进入校准'
+            : active && state?.progress != null
+                ? '${(state!.progress! * 100).toStringAsFixed(0)}%'
+                : null;
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 24,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(height: 20, child: Center(child: node)),
+                if (!isLast)
+                  Expanded(
+                    child: Container(width: 2, color: lineColor),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: Space.m),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: Space.l),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text(label,
+                        style: tt.titleSmall!.copyWith(color: labelColor)),
+                  ),
+                  if (hint != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(hint,
+                          style: tt.bodySmall!.copyWith(
+                              color: failed
+                                  ? semantic.error
+                                  : waitingGate
+                                      ? semantic.warning
+                                      : cs.onSurfaceVariant)),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

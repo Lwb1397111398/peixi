@@ -1,15 +1,20 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:peixi/core/asr/local_asr_client.dart';
+import 'package:peixi/core/asr/asr_model_controller.dart';
 import 'package:peixi/core/oss/oss_client.dart';
 import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/theme/tokens.dart';
+import 'package:peixi/core/theme/theme_controller.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
+import 'package:peixi/ui/widgets/page_header.dart';
+import 'package:peixi/ui/widgets/section_card.dart';
 import 'package:peixi/providers.dart';
 
-/// 设计稿 8.6 的 M1 子集：供应商预设（默认阿里云百炼）、自定义
-/// base_url/api_key/model 两档、〔测试连接〕、OSS 四项、token 成本统计。
-/// 播放偏好开关随阶段四弹幕引擎一起做；ASR 模式切换（云端/本地）随阶段二做。
+/// 设置页（设计稿 8.6 的 M1 子集）：外观（主题模式）、LLM API、OSS、
+/// ASR 模式、播放偏好，按 SectionCard 分组；播放偏好开关即时落库。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -35,9 +40,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   bool _testingOss = false;
   bool _loaded = false;
   AsrMode _asrMode = AsrMode.cloud;
-  String? _localModelDir;
-  bool _localModelReady = false;
   PlayPrefs _playPrefs = const PlayPrefs();
+  final _listScroll = ScrollController();
 
   @override
   void initState() {
@@ -74,20 +78,122 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final budget = await repo.loadLlmBudgetTokens();
     if (budget > 0) _budget.text = '$budget';
     _asrMode = await repo.loadAsrMode();
-    await _refreshLocalModel();
     _playPrefs = await repo.loadPlayPrefs();
     if (mounted) setState(() => _loaded = true);
-  }
-
-  Future<void> _refreshLocalModel() async {
-    final dir = await LocalAsrClient.defaultLocalModelDir();
-    _localModelDir = dir;
-    _localModelReady = LocalAsrClient(modelDir: dir).isReady;
   }
 
   Future<void> _savePlayPrefs(PlayPrefs p) async {
     setState(() => _playPrefs = p);
     await ref.read(settingsRepoProvider).savePlayPrefs(p);
+  }
+
+  /// ASR 本地模型状态行 + 应用内下载入口（手机端跑不了下载脚本）
+  Widget _buildLocalModelStatus(BuildContext context) {
+    final st = ref.watch(asrModelStateProvider);
+    final sem = context.semanticColors;
+    final textTheme = Theme.of(context).textTheme;
+
+    final (IconData icon, Color color, String label) = switch (st.phase) {
+      AsrModelPhase.ready => (
+          Icons.check_circle_outline,
+          sem.success,
+          '本地模型已就绪'
+        ),
+      AsrModelPhase.downloading => (
+          Icons.downloading,
+          sem.info,
+          '正在下载本地模型…'
+        ),
+      AsrModelPhase.failed => (
+          Icons.error_outline,
+          sem.error,
+          '本地模型下载失败'
+        ),
+      AsrModelPhase.missing => (
+          Icons.error_outline,
+          sem.warning,
+          '本地模型未下载'
+        ),
+      AsrModelPhase.resolving => (
+          Icons.help_outline,
+          sem.info,
+          '正在检查本地模型…'
+        ),
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: Space.s),
+          // Expanded：窄屏上标签可收缩省略，右侧按钮不被挤出屏幕
+          Expanded(
+            child: Text(label,
+                style: textTheme.bodyMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+          if (st.phase == AsrModelPhase.downloading)
+            TextButton.icon(
+              onPressed: () =>
+                  ref.read(asrModelStateProvider.notifier).cancel(),
+              icon: const Icon(Icons.close, size: 15),
+              label: const Text('取消'),
+            )
+          else ...[
+            if (st.phase == AsrModelPhase.missing ||
+                st.phase == AsrModelPhase.failed)
+              FilledButton.tonalIcon(
+                onPressed: () => unawaited(
+                    ref.read(asrModelStateProvider.notifier).download()),
+                icon: const Icon(Icons.download_outlined, size: 16),
+                label: const Text('下载模型'),
+              ),
+            const SizedBox(width: Space.s),
+            TextButton.icon(
+              onPressed: () => ref.invalidate(asrModelStateProvider),
+              icon: const Icon(Icons.refresh, size: 15),
+              label: const Text('刷新状态'),
+            ),
+          ],
+        ]),
+        if (st.modelDir.isNotEmpty)
+          Text('模型目录：${st.modelDir}', style: textTheme.bodySmall),
+        if (st.phase == AsrModelPhase.downloading) ...[
+          const SizedBox(height: Space.s),
+          LinearProgressIndicator(
+              value: st.ratio,
+              minHeight: 4,
+              borderRadius: BorderRadius.circular(2)),
+          const SizedBox(height: Space.xs),
+          Text(_downloadDetail(st), style: textTheme.bodySmall),
+        ],
+        if (st.phase == AsrModelPhase.failed && st.error != null) ...[
+          const SizedBox(height: Space.xs),
+          Text('失败原因：${st.error}',
+              style: textTheme.bodySmall!.copyWith(color: sem.error)),
+        ],
+        if (st.phase == AsrModelPhase.missing ||
+            st.phase == AsrModelPhase.failed) ...[
+          const SizedBox(height: Space.xs),
+          Text(
+            '点击"下载模型"即可在应用内完成（约 200–300 MB，国内优先走 hf-mirror 镜像，'
+            '建议 Wi-Fi 下进行）；桌面端也可手动运行 tool/download-sherpa-model.sh。'
+            '本地模式无说话人分离，角色映射将全部归为一个说话人。',
+            style: textTheme.bodySmall!.copyWith(color: sem.warning),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _downloadDetail(AsrModelState st) {
+    String mb(int b) => (b / 1048576).toStringAsFixed(1);
+    final totalPart = st.total > 0 ? ' / ${mb(st.total)} MB' : '';
+    final pct =
+        st.ratio != null ? '（${(st.ratio! * 100).toStringAsFixed(0)}%）' : '';
+    return '已下载 ${mb(st.received)} MB$totalPart$pct';
   }
 
   Widget _prefSlider({
@@ -115,6 +221,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   @override
   void dispose() {
+    _listScroll.dispose();
     for (final c in [
       _baseUrl,
       _apiKey,
@@ -133,248 +240,340 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('设置')),
-    body: _loaded
-        ? ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text('LLM API', style: Theme.of(context).textTheme.titleMedium),
-              DropdownButtonFormField<String>(
-                initialValue: _preset,
-                decoration: const InputDecoration(labelText: '供应商预设'),
-                items: const [
-                  DropdownMenuItem(value: '阿里云百炼', child: Text('阿里云百炼（推荐）')),
-                  DropdownMenuItem(value: '自定义', child: Text('自定义')),
-                ],
-                onChanged: (v) => setState(() {
-                  _preset = v!;
-                  if (v == '阿里云百炼') {
-                    _baseUrl.text = ApiConfig.bailianBaseUrl;
-                  }
-                }),
-              ),
-              TextFormField(
-                controller: _baseUrl,
-                enabled: _preset == '自定义',
-                decoration: const InputDecoration(labelText: 'Base URL'),
-              ),
-              TextFormField(
-                controller: _apiKey,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'API Key',
-                  hintText: '百炼控制台 → API-KEY 创建',
-                ),
-              ),
-              TextFormField(
-                controller: _modelCheap,
-                decoration: const InputDecoration(
-                  labelText: '轻量模型（映射/摘要/人物）',
-                  suffixText: 'cheap',
-                ),
-              ),
-              TextFormField(
-                controller: _modelStandard,
-                decoration: const InputDecoration(
-                  labelText: '主力模型（解说/批注/知识卡）',
-                  suffixText: 'standard',
-                ),
-              ),
-              TextFormField(
-                controller: _modelVision,
-                decoration: const InputDecoration(
-                  labelText: '视觉模型（实验性校准辅助）',
-                  suffixText: 'vision',
-                ),
-              ),
-              TextFormField(
-                controller: _budget,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: '月度 token 预算',
-                  hintText: '留空表示不限；达到上限后管线暂停并提示',
-                ),
-              ),
-              const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: _testing ? null : _testConnection,
-                icon: _testing
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.wifi_tethering),
-                label: Text(_testing ? '测试中…' : '测试连接'),
-              ),
-              const Divider(height: 32),
-              Text(
-                '阿里云 OSS（语音识别中转）',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              TextFormField(
-                controller: _ossBucket,
-                decoration: const InputDecoration(labelText: 'Bucket'),
-              ),
-              TextFormField(
-                controller: _ossEndpoint,
-                decoration: const InputDecoration(
-                  labelText: 'Endpoint',
-                  hintText: 'oss-cn-beijing.aliyuncs.com',
-                ),
-              ),
-              TextFormField(
-                controller: _ossAk,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'AccessKeyId'),
-              ),
-              TextFormField(
-                controller: _ossSk,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'AccessKeySecret'),
-              ),
-              const SizedBox(height: 8),
-              FilledButton.tonalIcon(
-                onPressed: _testingOss ? null : _testOss,
-                icon: _testingOss
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.cloud_upload_outlined),
-                label: Text(_testingOss ? '测试中…' : '测试 OSS 连接'),
-              ),
-              const Divider(height: 32),
-              Text('语音识别（ASR）', style: Theme.of(context).textTheme.titleMedium),
-              DropdownButtonFormField<AsrMode>(
-                initialValue: _asrMode,
-                decoration: const InputDecoration(labelText: '识别模式'),
-                items: const [
-                  DropdownMenuItem(
-                      value: AsrMode.cloud,
-                      child: Text('云端 · DashScope（需 OSS 中转，有说话人分离）')),
-                  DropdownMenuItem(
-                      value: AsrMode.local,
-                      child: Text('本地 · sherpa-onnx（离线，无说话人分离）')),
-                ],
-                onChanged: (v) async {
-                  if (v == null) return;
-                  setState(() => _asrMode = v);
-                  await ref.read(settingsRepoProvider).saveAsrMode(v);
-                },
-              ),
-              Row(children: [
-                Icon(
-                    _localModelReady
-                        ? Icons.check_circle
-                        : Icons.error_outline,
-                    size: 18,
-                    color: _localModelReady ? Colors.green : Colors.orange),
-                const SizedBox(width: 8),
-                Text(_localModelReady ? '本地模型已就绪' : '本地模型未下载'),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () async {
-                    await _refreshLocalModel();
-                    if (mounted) setState(() {});
-                  },
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('刷新状态'),
-                ),
-              ]),
-              if (_localModelDir != null)
-                Text('模型目录：$_localModelDir',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey.shade500)),
-              if (!_localModelReady)
-                Text(
-                  '未下载时请运行 tool/download-sherpa-model.sh，'
-                  '并把 models/asr 目录放到上面的模型目录（或 Windows exe 同级目录）。'
-                  '本地模式无说话人分离，角色映射将全部归为一个说话人。',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Colors.orange.shade300),
-                ),
-              const Divider(height: 32),
-              Text('播放偏好', style: Theme.of(context).textTheme.titleMedium),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('弹幕提问打断（L4）'),
-                subtitle: const Text('播放到关键场景自动暂停提问'),
-                value: _playPrefs.quizEnabled,
-                onChanged: (v) => _savePlayPrefs(
-                    _playPrefs.copyWith(quizEnabled: v)),
-              ),
-              _prefSlider(
-                label: '每集最多提问',
-                value: _playPrefs.maxPerEpisode.toDouble(),
-                min: 1,
-                max: 10,
-                divisions: 9,
-                display: '${_playPrefs.maxPerEpisode} 次',
-                onChanged: (v) => _savePlayPrefs(
-                    _playPrefs.copyWith(maxPerEpisode: v.round())),
-              ),
-              _prefSlider(
-                label: '两次提问最小间隔',
-                value: _playPrefs.minGapMinutes.toDouble(),
-                min: 1,
-                max: 15,
-                divisions: 14,
-                display: '${_playPrefs.minGapMinutes} 分钟',
-                onChanged: (v) => _savePlayPrefs(
-                    _playPrefs.copyWith(minGapMinutes: v.round())),
-              ),
-              _prefSlider(
-                label: '触发位置（场景进度比例）',
-                value: _playPrefs.triggerRatio,
-                min: 0.1,
-                max: 0.6,
-                divisions: 10,
-                display: '${(_playPrefs.triggerRatio * 100).round()}%',
-                onChanged: (v) => _savePlayPrefs(
-                    _playPrefs.copyWith(triggerRatio: v)),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('保留临时音频'),
-                subtitle: const Text('关闭可节省磁盘（重跑需重新抽取）'),
-                value: _playPrefs.keepTempAudio,
-                onChanged: (v) => _savePlayPrefs(
-                    _playPrefs.copyWith(keepTempAudio: v)),
-              ),
-              const Divider(height: 32),
-              Row(
-                children: [
-                  const Icon(Icons.paid_outlined, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                        '累计 LLM 消耗：$_totalTokens tokens'
-                        '（本月 $_monthTokens）'),
+  Widget build(BuildContext context) {
+    final themeMode = ref.watch(themeModeProvider);
+    return Scaffold(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const PageHeader(title: '设置', subtitle: '服务连接与学习偏好，全部即时生效'),
+          Expanded(
+            child: !_loaded
+                ? const LoadingView()
+                : Scrollbar(
+                    controller: _listScroll,
+                    child: ListView(
+                      controller: _listScroll,
+                      padding: const EdgeInsets.fromLTRB(
+                          Space.xl, 0, Space.xl, Space.xxl),
+                    children: [
+                      SectionCard(
+                        leading: Icons.brightness_6_outlined,
+                        title: '外观',
+                        subtitle: '浅色为默认书房；深色适合夜间观影与阅读',
+                        child: SegmentedButton<ThemeMode>(
+                          segments: const [
+                            ButtonSegment(
+                                value: ThemeMode.system,
+                                label: Text('跟随系统'),
+                                icon: Icon(Icons.settings_suggest_outlined,
+                                    size: 16)),
+                            ButtonSegment(
+                                value: ThemeMode.light,
+                                label: Text('浅色'),
+                                icon: Icon(Icons.light_mode_outlined,
+                                    size: 16)),
+                            ButtonSegment(
+                                value: ThemeMode.dark,
+                                label: Text('深色'),
+                                icon: Icon(Icons.dark_mode_outlined,
+                                    size: 16)),
+                          ],
+                          selected: {themeMode},
+                          onSelectionChanged: (s) => ref
+                              .read(themeModeProvider.notifier)
+                              .set(s.first),
+                        ),
+                      ),
+                      const SizedBox(height: Space.l),
+                      SectionCard(
+                        leading: Icons.auto_awesome_outlined,
+                        title: 'LLM API',
+                        subtitle: '解说、批注与知识卡由大模型生成',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DropdownButtonFormField<String>(
+                              initialValue: _preset,
+                              decoration:
+                                  const InputDecoration(labelText: '供应商预设'),
+                              items: const [
+                                DropdownMenuItem(
+                                    value: '阿里云百炼',
+                                    child: Text('阿里云百炼（推荐）')),
+                                DropdownMenuItem(
+                                    value: '自定义', child: Text('自定义')),
+                              ],
+                              onChanged: (v) => setState(() {
+                                _preset = v!;
+                                if (v == '阿里云百炼') {
+                                  _baseUrl.text = ApiConfig.bailianBaseUrl;
+                                }
+                              }),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _baseUrl,
+                              enabled: _preset == '自定义',
+                              decoration: InputDecoration(
+                                labelText: 'Base URL',
+                                helperText:
+                                    _preset == '自定义' ? null : '由供应商预设提供',
+                              ),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _apiKey,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                labelText: 'API Key',
+                                hintText: '百炼控制台 → API-KEY 创建',
+                              ),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _modelCheap,
+                              decoration: const InputDecoration(
+                                labelText: '轻量模型（映射/摘要/人物）',
+                                suffixText: 'cheap',
+                              ),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _modelStandard,
+                              decoration: const InputDecoration(
+                                labelText: '主力模型（解说/批注/知识卡）',
+                                suffixText: 'standard',
+                              ),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _modelVision,
+                              decoration: const InputDecoration(
+                                labelText: '视觉模型（实验性校准辅助）',
+                                suffixText: 'vision',
+                              ),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _budget,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: '月度 token 预算',
+                                hintText: '留空表示不限；达到上限后管线暂停并提示',
+                              ),
+                            ),
+                            const SizedBox(height: Space.l),
+                            Row(children: [
+                              FilledButton.icon(
+                                onPressed:
+                                    _testing ? null : _testConnection,
+                                icon: _testing
+                                    ? const SizedBox(
+                                        width: 15,
+                                        height: 15,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2))
+                                    : const Icon(Icons.wifi_tethering,
+                                        size: 17),
+                                label:
+                                    Text(_testing ? '测试中…' : '测试连接'),
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed: _clearLlmStats,
+                                icon: const Icon(
+                                    Icons.delete_sweep_outlined,
+                                    size: 16),
+                                label: const Text('清空统计与缓存'),
+                              ),
+                            ]),
+                            const SizedBox(height: Space.m),
+                            Text(
+                                '累计 LLM 消耗：$_totalTokens tokens'
+                                '（本月 $_monthTokens）',
+                                style:
+                                    Theme.of(context).textTheme.bodySmall),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: Space.l),
+                      SectionCard(
+                        leading: Icons.cloud_upload_outlined,
+                        title: '阿里云 OSS（语音识别中转）',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TextFormField(
+                              controller: _ossBucket,
+                              decoration:
+                                  const InputDecoration(labelText: 'Bucket'),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _ossEndpoint,
+                              decoration: const InputDecoration(
+                                labelText: 'Endpoint',
+                                hintText: 'oss-cn-beijing.aliyuncs.com',
+                              ),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _ossAk,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                  labelText: 'AccessKeyId'),
+                            ),
+                            const SizedBox(height: Space.m),
+                            TextFormField(
+                              controller: _ossSk,
+                              obscureText: true,
+                              decoration: const InputDecoration(
+                                  labelText: 'AccessKeySecret'),
+                            ),
+                            const SizedBox(height: Space.l),
+                            FilledButton.tonalIcon(
+                              onPressed:
+                                  _testingOss ? null : _testOss,
+                              icon: _testingOss
+                                  ? const SizedBox(
+                                      width: 15,
+                                      height: 15,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2))
+                                  : const Icon(Icons.cloud_done_outlined,
+                                      size: 17),
+                              label: Text(
+                                  _testingOss ? '测试中…' : '测试 OSS 连接'),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: Space.l),
+                      SectionCard(
+                        leading: Icons.graphic_eq_outlined,
+                        title: '语音识别（ASR）',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DropdownButtonFormField<AsrMode>(
+                              initialValue: _asrMode,
+                              isExpanded: true, // 窄屏：长文案省略不溢出
+                              decoration:
+                                  const InputDecoration(labelText: '识别模式'),
+                              items: const [
+                                DropdownMenuItem(
+                                    value: AsrMode.cloud,
+                                    child: Text(
+                                        '云端 · DashScope（需 OSS 中转，有说话人分离）')),
+                                DropdownMenuItem(
+                                    value: AsrMode.local,
+                                    child: Text(
+                                        '本地 · sherpa-onnx（离线，无说话人分离）')),
+                              ],
+                              onChanged: (v) async {
+                                if (v == null) return;
+                                setState(() => _asrMode = v);
+                                await ref
+                                    .read(settingsRepoProvider)
+                                    .saveAsrMode(v);
+                                // 选中本地模式而模型未就绪 → 自动开始下载
+                                //（幂等：下载中不会重复启动）
+                                if (v == AsrMode.local) {
+                                  final st =
+                                      ref.read(asrModelStateProvider);
+                                  if (st.phase != AsrModelPhase.ready &&
+                                      st.phase !=
+                                          AsrModelPhase.downloading) {
+                                    unawaited(ref
+                                        .read(asrModelStateProvider.notifier)
+                                        .download());
+                                  }
+                                }
+                              },
+                            ),
+                            const SizedBox(height: Space.m),
+                            _buildLocalModelStatus(context),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: Space.l),
+                      SectionCard(
+                        leading: Icons.play_circle_outline,
+                        title: '播放偏好',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('弹幕提问打断（L4）'),
+                              subtitle:
+                                  const Text('播放到关键场景自动暂停提问'),
+                              value: _playPrefs.quizEnabled,
+                              onChanged: (v) => _savePlayPrefs(
+                                  _playPrefs.copyWith(quizEnabled: v)),
+                            ),
+                            _prefSlider(
+                              label: '每集最多提问',
+                              value: _playPrefs.maxPerEpisode.toDouble(),
+                              min: 1,
+                              max: 10,
+                              divisions: 9,
+                              display: '${_playPrefs.maxPerEpisode} 次',
+                              onChanged: (v) => _savePlayPrefs(_playPrefs
+                                  .copyWith(maxPerEpisode: v.round())),
+                            ),
+                            _prefSlider(
+                              label: '两次提问最小间隔',
+                              value:
+                                  _playPrefs.minGapMinutes.toDouble(),
+                              min: 1,
+                              max: 15,
+                              divisions: 14,
+                              display:
+                                  '${_playPrefs.minGapMinutes} 分钟',
+                              onChanged: (v) => _savePlayPrefs(_playPrefs
+                                  .copyWith(minGapMinutes: v.round())),
+                            ),
+                            _prefSlider(
+                              label: '触发位置（场景进度比例）',
+                              value: _playPrefs.triggerRatio,
+                              min: 0.1,
+                              max: 0.6,
+                              divisions: 10,
+                              display:
+                                  '${(_playPrefs.triggerRatio * 100).round()}%',
+                              onChanged: (v) => _savePlayPrefs(
+                                  _playPrefs.copyWith(triggerRatio: v)),
+                            ),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('保留临时音频'),
+                              subtitle:
+                                  const Text('关闭可节省磁盘（重跑需重新抽取）'),
+                              value: _playPrefs.keepTempAudio,
+                              onChanged: (v) => _savePlayPrefs(
+                                  _playPrefs.copyWith(keepTempAudio: v)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: Space.xl),
+                      Center(
+                        child: FilledButton.icon(
+                          onPressed: _save,
+                          icon: const Icon(Icons.save_outlined, size: 17),
+                          label: const Text('保存全部'),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              TextButton.icon(
-                onPressed: _clearLlmStats,
-                icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                label: const Text('清空调用统计与响应缓存'),
-              ),
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: _save,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('保存全部'),
-              ),
-            ],
-          )
-        : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-  );
+                ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _testConnection() async {
     setState(() => _testing = true);

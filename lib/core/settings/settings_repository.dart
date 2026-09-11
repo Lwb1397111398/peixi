@@ -34,6 +34,8 @@ class SettingsRepository {
   static const _kAsrMode = 'asr.mode';
   // LLM 月度 token 预算（0 = 不限）
   static const _kLlmBudget = 'llm.monthly_budget_tokens';
+  // 主题模式 'system' | 'light' | 'dark'（core 层不依赖 material，存原始串）
+  static const _kThemeMode = 'app.theme_mode';
   // 桌面窗口边界 'left,top,width,height'
   static const _kWindowBounds = 'window.bounds';
 
@@ -133,6 +135,10 @@ class SettingsRepository {
 
   Future<void> saveLlmBudgetTokens(int tokens) async =>
       _set(_kLlmBudget, tokens.toString());
+
+  Future<String> loadThemeModeRaw() async => await _get(_kThemeMode) ?? 'light';
+
+  Future<void> saveThemeModeRaw(String raw) => _set(_kThemeMode, raw);
 
   Future<WindowBounds?> loadWindowBounds() async {
     final raw = await _get(_kWindowBounds);

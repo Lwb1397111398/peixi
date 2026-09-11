@@ -7,8 +7,13 @@ import 'package:media_kit/media_kit.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/calibration/visual_assistant.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
+import 'package:peixi/ui/widgets/app_badge.dart';
+import 'package:peixi/ui/widgets/empty_state.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
+import 'package:peixi/ui/widgets/sheet_scaffold.dart';
 import 'package:peixi/providers.dart';
 
 /// 校准页（设计稿 8.3，S7 人工闸门）：
@@ -186,28 +191,26 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
-      builder: (sheetCtx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('视觉辅助建议（实验性）',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
+      isScrollControlled: true,
+      builder: (sheetCtx) => SheetScaffold(
+        title: '视觉辅助建议（实验性）',
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(
+              Space.m, Space.s, Space.m, Space.xl),
+          children: [
             for (final r in results)
               ListTile(
                 dense: true,
-                contentPadding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(borderRadius: AppRadius.rMd),
                 title: Text(
                     r.suggestion == null
                         ? '${r.name}：未能判断'
                         : '${r.name} → ${r.suggestion}',
                     style: TextStyle(
                         color: r.suggestion == null
-                            ? Colors.grey
-                            : Colors.green)),
+                            ? Theme.of(context).colorScheme.onSurfaceVariant
+                            : context.semanticColors.success)),
                 subtitle: r.reason == null ? null : Text(r.reason!),
                 trailing: r.suggestion == null
                     ? null
@@ -218,7 +221,7 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
                         },
                         child: const Text('采纳')),
               ),
-          ]),
+          ],
         ),
       ),
     );
@@ -265,12 +268,17 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const LoadingView()
           : _clusters.isEmpty
-              ? const Center(child: Text('没有可校准的说话人簇'))
+              ? EmptyState(
+                  icon: Icons.record_voice_over_outlined,
+                  title: '没有可校准的说话人簇',
+                  message: '本项目没有待确认的声音簇，可返回媒体库继续处理。',
+                )
               : Column(children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    padding: const EdgeInsets.fromLTRB(
+                        Space.xl, Space.s, Space.xl, 0),
                     child: Text(
                       '确认每个声音对应的角色名。低置信度建议已高亮，改完点右下角确认，'
                       '之后将自动完成场景切分与解说生成。',
@@ -279,7 +287,7 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
                   ),
                   Expanded(
                     child: ListView.builder(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(Space.l),
                       itemCount: _clusters.length,
                       itemBuilder: (context, i) => _clusterTile(_clusters[i]),
                     ),
@@ -287,7 +295,7 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
                 ]),
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(Space.l),
           child: FilledButton.icon(
             onPressed: _submitting ? null : _confirm,
             icon: _submitting
@@ -313,39 +321,36 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
                     .padLeft(8, '0'),
             radix: 16));
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: const EdgeInsets.symmetric(vertical: Space.s),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(Space.l),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Container(
               width: 14,
               height: 14,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
               decoration: BoxDecoration(
-                color: lowConf
-                    ? Colors.orange.withValues(alpha: 0.18)
-                    : Colors.green.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '${cl.character.name}（${(cl.character.confidence ?? 0).toStringAsFixed(2)}）'
-                '${lowConf ? ' · 待确认' : ''}',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: lowConf ? Colors.orange : Colors.green),
-              ),
+                  color: color,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .outlineVariant)),
             ),
+            const SizedBox(width: Space.s),
+            Text(
+              '${cl.character.name}（${(cl.character.confidence ?? 0).toStringAsFixed(2)}）',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            if (lowConf) ...[
+              const SizedBox(width: Space.s),
+              const AppBadge('待确认', tone: BadgeTone.warning),
+            ],
             const Spacer(),
             Text('${cl.lineCount} 句',
-                style: Theme.of(context).textTheme.bodySmall),
+                style: Theme.of(context).textTheme.labelMedium),
           ]),
-          const SizedBox(height: 8),
+          const SizedBox(height: Space.s),
           for (final seg in cl.lines)
             Row(children: [
               IconButton(
@@ -367,13 +372,12 @@ class _CalibrationPageState extends ConsumerState<CalibrationPage> {
                 ),
               ),
             ]),
-          const SizedBox(height: 4),
+          const SizedBox(height: Space.xs),
           TextField(
             controller: _controllers[cl.character.id],
             decoration: const InputDecoration(
               isDense: true,
               labelText: '角色名',
-              border: OutlineInputBorder(),
             ),
           ),
         ]),

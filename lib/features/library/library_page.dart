@@ -7,21 +7,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/drop_classifier.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/backup/project_package.dart';
+import 'package:peixi/features/calibration/calibration_page.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
-import 'package:peixi/features/cards/cards_page.dart';
-import 'package:peixi/features/calibration/calibration_page.dart';
 import 'package:peixi/features/player/player_page.dart';
 import 'package:peixi/features/processing/processing_page.dart';
 import 'package:peixi/features/reader/reader_page.dart';
-import 'package:peixi/features/review/review_page.dart';
-import 'package:peixi/features/settings/settings_page.dart';
+import 'package:peixi/ui/widgets/app_badge.dart';
+import 'package:peixi/ui/widgets/confirm_dialog.dart';
+import 'package:peixi/ui/widgets/empty_state.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
+import 'package:peixi/ui/widgets/page_header.dart';
 import 'package:peixi/providers.dart';
 
 /// 媒体库（设计稿 8.1）：项目卡片网格 + 状态徽章 + 处理进度。
-/// 桌面端支持拖拽导入（视频/小说/项目包）与卡片右键菜单。
+/// 桌面端支持拖拽导入（视频/小说/项目包）与卡片右键菜单；
+/// 全局导航由左侧 rail 承担，本页只负责"库"本身。
 class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
 
@@ -195,113 +199,143 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     final projects = db.select(db.projects).watch();
     final pipeline = ref.watch(pipelineControllerProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('陪析 · 媒体库'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.school_outlined),
-            tooltip: '卡片集',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const CardsPage())),
-          ),
-          IconButton(
-            icon: const Icon(Icons.fact_check_outlined),
-            tooltip: '复盘',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const ReviewPage())),
-          ),
-          IconButton(
-            icon: const Icon(Icons.unarchive_outlined),
-            tooltip: '导入项目包',
-            onPressed: () => _importPackage(context, ref),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: '设置',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const SettingsPage())),
-          ),
-        ],
-      ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'import_video',
-            icon: const Icon(Icons.video_file_outlined),
-            label: const Text('导入视频'),
-            onPressed: () => _importVideos(context, ref),
-          ),
-          const SizedBox(height: 10),
-          FloatingActionButton.extended(
-            heroTag: 'import_novel',
-            icon: const Icon(Icons.auto_stories_outlined),
-            label: const Text('导入小说'),
-            onPressed: () => _importNovels(context, ref),
-          ),
-        ],
-      ),
-      body: DropTarget(
-        onDragEntered: (_) => setState(() => _dragging++),
-        onDragExited: (_) =>
-            setState(() => _dragging = (_dragging - 1).clamp(0, 1 << 30)),
-        onDragDone: (details) {
-          setState(() => _dragging = 0);
-          _onDrop(details);
-        },
-        child: Stack(children: [
-          StreamBuilder<List<Project>>(
-            stream: projects,
-            builder: (context, snap) {
-              final list = snap.data ?? const [];
-              if (list.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.movie_filter_outlined,
-                          size: 72, color: Colors.grey.shade600),
-                      const SizedBox(height: 12),
-                      Text('还没有项目',
-                          style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 4),
-                      const Text('点右下角导入，或直接把视频/小说文件拖进窗口'),
-                    ],
-                  ),
-                );
-              }
-              return GridView.builder(
-                padding: const EdgeInsets.all(12),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 320,
-                  childAspectRatio: 1.6,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dragging++),
+      onDragExited: (_) =>
+          setState(() => _dragging = (_dragging - 1).clamp(0, 1 << 30)),
+      onDragDone: (details) {
+        setState(() => _dragging = 0);
+        _onDrop(details);
+      },
+      child: StreamBuilder<List<Project>>(
+        stream: projects,
+        builder: (context, snap) {
+          final list = snap.data;
+          return Stack(
+            children: [
+              if (list == null)
+                const LoadingView()
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    PageHeader(
+                      title: '媒体库',
+                      subtitle: _statsText(list),
+                      actions: [
+                        OutlinedButton.icon(
+                          onPressed: () => _importNovels(context, ref),
+                          icon: const Icon(Icons.auto_stories_outlined,
+                              size: 17),
+                          label: const Text('导入小说'),
+                        ),
+                        FilledButton.icon(
+                          onPressed: () => _importVideos(context, ref),
+                          icon: const Icon(Icons.video_file_outlined,
+                              size: 17),
+                          label: const Text('导入视频'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.unarchive_outlined),
+                          tooltip: '导入项目包',
+                          onPressed: () => _importPackage(context, ref),
+                        ),
+                      ],
+                    ),
+                    Expanded(
+                      child: list.isEmpty
+                          ? EmptyState(
+                              icon: Icons.movie_filter_outlined,
+                              title: '还没有项目',
+                              message:
+                                  '导入视频或小说，陪析会自动完成字幕提取、转录与解说；'
+                                  '也可以把文件直接拖进窗口。',
+                              actionLabel: '导入视频',
+                              onAction: () => _importVideos(context, ref),
+                            )
+                          : GridView.builder(
+                              padding: const EdgeInsets.fromLTRB(
+                                  Space.xl, 0, Space.xl, Space.xl),
+                              gridDelegate:
+                                  const SliverGridDelegateWithMaxCrossAxisExtent(
+                                maxCrossAxisExtent: 340,
+                                childAspectRatio: 1.5,
+                                mainAxisSpacing: Space.m,
+                                crossAxisSpacing: Space.m,
+                              ),
+                              itemCount: list.length,
+                              itemBuilder: (context, i) => _ProjectCard(
+                                  project: list[i],
+                                  state: pipeline[list[i].id]),
+                            ),
+                    ),
+                  ],
                 ),
-                itemCount: list.length,
-                itemBuilder: (context, i) =>
-                    _ProjectCard(project: list[i], state: pipeline[list[i].id]),
-              );
-            },
+              if (_dragging > 0) const _DragOverlay(),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _statsText(List<Project> list) {
+    if (list.isEmpty) return '把喜欢的剧集和小说交给陪析，边看边学';
+    var ready = 0, processing = 0, waitCal = 0, failed = 0;
+    for (final p in list) {
+      switch (ProjectStatus.fromDb(p.status)) {
+        case ProjectStatus.ready:
+          ready++;
+        case ProjectStatus.waitCalibration:
+          waitCal++;
+        case ProjectStatus.failed:
+          failed++;
+        default:
+          processing++;
+      }
+    }
+    return [
+      '共 ${list.length} 个项目',
+      if (processing > 0) '$processing 处理中',
+      if (waitCal > 0) '$waitCal 待校准',
+      if (ready > 0) '$ready 可学习',
+      if (failed > 0) '$failed 失败',
+    ].join(' · ');
+  }
+}
+
+/// 拖拽悬停遮罩：半透明纸面 + 中央投放说明卡
+class _DragOverlay extends StatelessWidget {
+  const _DragOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Positioned.fill(
+      child: Container(
+        color: scheme.surface.withValues(alpha: 0.78),
+        alignment: Alignment.center,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: Space.xxl, vertical: Space.xl),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLowest,
+            borderRadius: AppRadius.rLg,
+            border: Border.all(color: scheme.primary, width: 1.5),
           ),
-          if (_dragging > 0)
-            Positioned.fill(
-              child: Container(
-                color: Theme.of(context)
-                    .colorScheme
-                    .primary
-                    .withValues(alpha: 0.15),
-                alignment: Alignment.center,
-                child: Text('松手导入：视频 / 小说 / 项目包',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-              ),
-            ),
-        ]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.download_for_offline_outlined,
+                  size: 34, color: scheme.primary),
+              const SizedBox(height: Space.m),
+              Text('松手导入', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: Space.xs),
+              Text('视频 / 小说 / 项目包',
+                  style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -315,83 +349,112 @@ class _ProjectCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final status = ProjectStatus.fromDb(project.status);
-    final (badge, color) = statusBadge(status, project, state);
+    final (badge, tone) = statusBadge(status, project, state);
+    final scheme = Theme.of(context).colorScheme;
+    final semantic = context.semanticColors;
+    final isNovel = project.type == 'novel';
+    final typeTint = isNovel ? scheme.tertiaryContainer : scheme.primaryContainer;
+    final typeFg = isNovel ? scheme.onTertiaryContainer : scheme.onPrimaryContainer;
 
-      return Card(
-      clipBehavior: Clip.antiAlias,
+    return Card(
       child: InkWell(
         onTap: () => _open(context, ref),
         onLongPress: () => _showActions(context, ref),
         // 桌面端右键 = 长按菜单
         onSecondaryTapUp: (_) => _showActions(context, ref),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(Space.l),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(children: [
-                Icon(
-                    project.type == 'video'
-                        ? Icons.movie_outlined
-                        : Icons.menu_book_outlined,
-                    size: 20,
-                    color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    project.title +
-                        (_episodeSuffix() ?? ''),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: typeTint,
+                      borderRadius: AppRadius.rSm,
+                    ),
+                    child: Icon(
+                      isNovel
+                          ? Icons.menu_book_outlined
+                          : Icons.movie_outlined,
+                      size: 19,
+                      color: typeFg,
+                    ),
                   ),
-                ),
-              ]),
+                  const SizedBox(width: Space.m),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Text(
+                        project.title + (_episodeSuffix() ?? ''),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: Space.s),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: AppBadge(badge, tone: tone),
+                  ),
+                ],
+              ),
               const Spacer(),
-              Text(status == ProjectStatus.failed
-                  ? '失败：${stageLabelOf(project.failedStage, isNovel: project.type == 'novel')}'
-                  : statusLabel(status, isNovel: project.type == 'novel'),
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Colors.grey.shade400)),
-              const SizedBox(height: 6),
-              if (state?.busy == true && state?.progress != null)
+              if (state?.busy == true) ...[
                 Row(children: [
                   Expanded(
-                    child: LinearProgressIndicator(
-                        value: state!.progress,
-                        minHeight: 6,
-                        borderRadius: BorderRadius.circular(3)),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: state?.progress,
+                        minHeight: 5,
+                      ),
+                    ),
                   ),
                   _cancelTap(context, ref),
-                ])
-              else if (state?.busy == true)
+                ]),
+              ] else if (status == ProjectStatus.failed) ...[
                 Row(children: [
-                  const Expanded(child: LinearProgressIndicator(minHeight: 6)),
-                  _cancelTap(context, ref),
-                ])
-              else
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
+                  Icon(Icons.error_outline,
+                      size: 14, color: semantic.error),
+                  const SizedBox(width: Space.xs),
+                  Expanded(
+                    child: Text(
+                      '失败：${stageLabelOf(project.failedStage, isNovel: isNovel)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: semantic.error),
+                    ),
                   ),
-                  child: Text(badge,
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: color,
-                          fontWeight: FontWeight.w600)),
-                ),
-              if (status == ProjectStatus.failed)
-                TextButton.icon(
-                  onPressed: () => ref
-                      .read(pipelineControllerProvider.notifier)
-                      .retry(project.id),
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('重试该阶段'),
+                  Tooltip(
+                    message: '重试该阶段',
+                    child: InkWell(
+                      borderRadius: AppRadius.rSm,
+                      onTap: () => ref
+                          .read(pipelineControllerProvider.notifier)
+                          .retry(project.id),
+                      child: Padding(
+                        padding: const EdgeInsets.all(Space.xs),
+                        child: Icon(Icons.refresh,
+                            size: 16, color: scheme.primary),
+                      ),
+                    ),
+                  ),
+                ]),
+              ] else
+                Text(
+                  statusLabel(status, isNovel: isNovel),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
             ],
           ),
@@ -416,8 +479,9 @@ class _ProjectCard extends ConsumerWidget {
             .read(pipelineControllerProvider.notifier)
             .cancel(project.id),
         child: Padding(
-          padding: const EdgeInsets.only(left: 8),
-          child: Icon(Icons.close, size: 16, color: Colors.grey.shade500),
+          padding: const EdgeInsets.only(left: Space.s),
+          child: Icon(Icons.close,
+              size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ),
     );
@@ -464,28 +528,31 @@ class _ProjectCard extends ConsumerWidget {
       context: context,
       showDragHandle: true,
       builder: (sheetCtx) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(
-            leading: const Icon(Icons.archive_outlined),
-            title: const Text('导出项目包'),
-            subtitle: const Text('解说/卡片/问答/小说正文打包为 zip'),
-            onTap: () {
-              Navigator.pop(sheetCtx);
-              _exportPackage(context, ref);
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.delete_outline,
-                color: Theme.of(context).colorScheme.error),
-            title: Text('删除项目',
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.error)),
-            onTap: () {
-              Navigator.pop(sheetCtx);
-              _confirmDelete(context, ref);
-            },
-          ),
-        ]),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Space.s, 0, Space.s, Space.s),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(
+              leading: const Icon(Icons.archive_outlined),
+              title: const Text('导出项目包'),
+              subtitle: const Text('解说/卡片/问答/小说正文打包为 zip'),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _exportPackage(context, ref);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline,
+                  color: context.semanticColors.error),
+              title: Text('删除项目',
+                  style:
+                      TextStyle(color: context.semanticColors.error)),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                _confirmDelete(context, ref);
+              },
+            ),
+          ]),
+        ),
       ),
     );
   }
@@ -522,46 +589,38 @@ class _ProjectCard extends ConsumerWidget {
     }
   }
 
-  void _confirmDelete(BuildContext context, WidgetRef ref) {
+  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
     final copyWarning = Platform.isAndroid
         ? '\n导入时复制进应用的源文件副本也将一并删除。'
         : '';
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('删除「${project.title}」？'),
-        content: Text('解说、卡片、问答记录将一并删除，且不可恢复。$copyWarning'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(ctx).colorScheme.error),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await ref
-                  .read(pipelineControllerProvider.notifier)
-                  .deleteProject(project.id);
-            },
-            child: const Text('删除'),
-          ),
-        ],
-      ),
+    final ok = await ConfirmDialog.show(
+      context,
+      title: '删除「${project.title}」？',
+      message: '解说、卡片、问答记录将一并删除，且不可恢复。$copyWarning',
+      confirmLabel: '删除',
+      destructive: true,
     );
+    if (!ok) return;
+    await ref
+        .read(pipelineControllerProvider.notifier)
+        .deleteProject(project.id);
   }
 }
 
-/// 状态徽章文案与配色。
-(String, Color) statusBadge(
+/// 状态徽章文案与语义色调（色值统一走 AppBadge/DESIGN.md token）
+(String, BadgeTone) statusBadge(
     ProjectStatus status, Project project, PipelineState? state) {
   switch (status) {
     case ProjectStatus.ready:
-      return project.type == 'novel' ? ('可阅读', Colors.green) : ('可观看', Colors.green);
+      return project.type == 'novel'
+          ? ('可阅读', BadgeTone.success)
+          : ('可观看', BadgeTone.success);
     case ProjectStatus.waitCalibration:
-      return ('待校准', Colors.orange);
+      return ('待校准', BadgeTone.warning);
     case ProjectStatus.failed:
-      return ('处理失败', Colors.red);
+      return ('处理失败', BadgeTone.error);
     default:
-      return ('处理中', Colors.blue);
+      return ('处理中', BadgeTone.info);
   }
 }
 

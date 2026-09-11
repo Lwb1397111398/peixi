@@ -2,7 +2,9 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/cards/srs_scheduler.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/providers.dart';
 
 /// SRS 复习会话：到期卡 + 新卡依次出现，翻面后四键评分。
@@ -89,7 +91,7 @@ class _SrsReviewPageState extends ConsumerState<SrsReviewPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: LoadingView());
     }
     final done = _index >= _queue.length;
     return Scaffold(
@@ -99,81 +101,133 @@ class _SrsReviewPageState extends ConsumerState<SrsReviewPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.task_alt, size: 64, color: Colors.green),
-                  const SizedBox(height: 12),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: context.semanticColors.successBg,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.task_alt,
+                        size: 34, color: context.semanticColors.success),
+                  ),
+                  const SizedBox(height: Space.l),
                   Text('已复习 $_reviewed 张',
-                      style: Theme.of(context).textTheme.titleLarge),
+                      style: Theme.of(context).textTheme.headlineSmall),
                   if (_againCount > 0)
                     Text('其中 $_againCount 张需要 10 分钟后巩固',
-                        style: TextStyle(color: Colors.grey.shade500)),
+                        style: Theme.of(context).textTheme.bodySmall),
                 ],
               ),
             )
-          : Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    _projectTitle[_queue[_index].projectId] ?? '',
-                    style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
-                  ),
-                  const SizedBox(height: 24),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        children: [
-                          Text(_queue[_index].term,
-                              style: Theme.of(context).textTheme.headlineMedium),
-                          const SizedBox(height: 16),
-                          if (_revealed) ...[
-                            Text(_queue[_index].title,
-                                style: Theme.of(context).textTheme.titleMedium),
-                            const SizedBox(height: 8),
-                            Text(_queue[_index].content,
-                                style: Theme.of(context).textTheme.bodyLarge),
-                            if (_queue[_index].uncertain)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Text('AI 对此词条不确定，请自行甄别',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.orange.shade300)),
-                              ),
-                          ],
-                        ],
+          : Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Padding(
+                  padding: const EdgeInsets.all(Space.xl),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _projectTitle[_queue[_index].projectId] ?? '',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.labelMedium,
                       ),
-                    ),
-                  ),
-                  if (!_revealed)
-                    FilledButton(
-                      onPressed: () => setState(() => _revealed = true),
-                      child: const Text('显示答案'),
-                    )
-                  else
-                    Row(children: [
-                      for (final g in SrsGrade.values)
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 3),
-                            child: OutlinedButton(
-                              onPressed: () => _grade(g),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: g == SrsGrade.again
-                                    ? Colors.red.shade300
-                                    : g == SrsGrade.easy
-                                        ? Colors.green.shade300
-                                        : null,
-                              ),
-                              child: Text(
-                                  '${_gradeLabel(g)}\n${_fmtPreview(g)}',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(fontSize: 12)),
+                      Expanded(
+                        child: Center(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              children: [
+                                Text(_queue[_index].term,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineMedium),
+                                const SizedBox(height: Space.l),
+                                if (_revealed) ...[
+                                  Container(
+                                    padding: const EdgeInsets.all(Space.l),
+                                    constraints: const BoxConstraints(
+                                        minWidth: double.infinity),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerLowest,
+                                      borderRadius: AppRadius.rLg,
+                                      border: Border.all(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .outlineVariant),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(_queue[_index].title,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium),
+                                        const SizedBox(height: Space.s),
+                                        Text(_queue[_index].content,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodyLarge!
+                                                .copyWith(height: 1.65)),
+                                        if (_queue[_index].uncertain)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                                top: Space.s),
+                                            child: Text(
+                                                'AI 对此词条不确定，请自行甄别',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall!
+                                                    .copyWith(
+                                                        color: context
+                                                            .semanticColors
+                                                            .warning)),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                         ),
-                    ]),
-                ],
+                      ),
+                      if (!_revealed)
+                        FilledButton(
+                          onPressed: () => setState(() => _revealed = true),
+                          child: const Text('显示答案'),
+                        )
+                      else
+                        Row(children: [
+                          for (final g in SrsGrade.values)
+                            Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 3),
+                                child: OutlinedButton(
+                                  onPressed: () => _grade(g),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: g == SrsGrade.again
+                                        ? context.semanticColors.error
+                                        : g == SrsGrade.easy
+                                            ? context.semanticColors.success
+                                            : null,
+                                  ),
+                                  child: Text(
+                                      '${_gradeLabel(g)}\n${_fmtPreview(g)}',
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(fontSize: 12)),
+                                ),
+                              ),
+                            ),
+                        ]),
+                    ],
+                  ),
+                ),
               ),
             ),
     );

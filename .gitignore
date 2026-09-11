@@ -52,3 +52,9 @@ models/
 
 # ZCode 会话产物
 .zcode/
+
+# 开发截图与手工验证产物
+.shots/
+
+# Android 根级构建产物（子模块构建目录已重定向到 /build/）
+android/build/

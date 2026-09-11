@@ -14,6 +14,7 @@ import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/logging/crash_log.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
+import 'package:peixi/core/theme/theme_controller.dart';
 import 'package:peixi/core/window/window_bounds.dart';
 import 'package:peixi/providers.dart';
 
@@ -35,6 +36,8 @@ Future<void> main() async {
     final db = AppDatabase(NativeDatabase.createInBackground(
         File(p.join(dir.path, 'peixi.sqlite'))));
     final repo = SettingsRepository(db, FlutterSecureStorage());
+    // 主题初值在 runApp 前读出，避免启动闪变
+    final themeMode = themeModeFromName(await repo.loadThemeModeRaw());
     // 启动清理：90 天前的 LLM 调用日志与响应缓存只占空间不再有用
     await LlmService(db: db).pruneOldEntries();
     // 桌面端窗口尺寸/位置记忆（失败不阻塞启动）
@@ -49,6 +52,7 @@ Future<void> main() async {
       overrides: [
         databaseProvider.overrideWithValue(db),
         settingsRepoProvider.overrideWithValue(repo),
+        themeModeProvider.overrideWith(() => ThemeModeController(themeMode)),
       ],
       child: const PeixiApp(),
     ));

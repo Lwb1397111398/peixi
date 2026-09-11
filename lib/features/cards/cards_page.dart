@@ -7,13 +7,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/cards/anki_exporter.dart';
 import 'package:peixi/features/cards/srs_review_page.dart';
 import 'package:peixi/features/cards/srs_scheduler.dart';
+import 'package:peixi/ui/widgets/app_badge.dart';
+import 'package:peixi/ui/widgets/confirm_dialog.dart';
+import 'package:peixi/ui/widgets/empty_state.dart';
+import 'package:peixi/ui/widgets/loading_view.dart';
+import 'package:peixi/ui/widgets/page_header.dart';
 import 'package:peixi/providers.dart';
 
 /// 卡片集（设计稿 8.5）：知识卡片按项目分组浏览（drift watch 响应式），
-/// 点卡片可编辑/删除，AppBar 提供复习入口与 Anki CSV 导出。
+/// 点卡片可编辑/删除，页头提供复习入口与 Anki CSV 导出。
 class CardsPage extends ConsumerStatefulWidget {
   const CardsPage({super.key});
 
@@ -51,82 +57,88 @@ class _CardsPageState extends ConsumerState<CardsPage> {
     final db = ref.watch(databaseProvider);
     final now = DateTime.now();
     return Scaffold(
-      appBar: AppBar(
-        title: StreamBuilder<List<KnowledgeCard>>(
-          stream: db.select(db.knowledgeCards).watch(),
-          builder: (context, cardsSnap) {
-            final all = cardsSnap.data ?? const <KnowledgeCard>[];
-            final dueCount =
-                all.where((c) => isDue(c.dueAt, now)).length;
-            return Text('卡片集（${all.length}）· 到期 $dueCount');
-          },
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.style_outlined),
-            tooltip: '复习到期卡片',
-            onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const SrsReviewPage())),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          StreamBuilder<List<KnowledgeCard>>(
+            stream: db.select(db.knowledgeCards).watch(),
+            builder: (context, cardsSnap) {
+              final all = cardsSnap.data ?? const <KnowledgeCard>[];
+              final dueCount =
+                  all.where((c) => isDue(c.dueAt, now)).length;
+              return PageHeader(
+                title: '卡片集（${all.length}）· 到期 $dueCount',
+                subtitle: '解说与批注中沉淀的词条，支持 SRS 间隔复习',
+                actions: [
+                  FilledButton.tonalIcon(
+                    onPressed: all.isEmpty
+                        ? null
+                        : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const SrsReviewPage())),
+                    icon: const Icon(Icons.style_outlined, size: 17),
+                    label: const Text('开始复习'),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.download_outlined),
+                    tooltip: '导出 Anki CSV',
+                    onPressed: _exportAnki,
+                  ),
+                ],
+              );
+            },
           ),
-          IconButton(
-            icon: const Icon(Icons.download_outlined),
-            tooltip: '导出 Anki CSV',
-            onPressed: _exportAnki,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                Space.xl, 0, Space.xl, Space.m),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: '搜索词条/标题/内容',
+                prefixIcon: Icon(Icons.search),
+                isDense: true,
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<List<KnowledgeCard>>(
+              stream: db.select(db.knowledgeCards).watch(),
+              builder: (context, cardsSnap) {
+                return StreamBuilder<List<Project>>(
+                  stream: db.select(db.projects).watch(),
+                  builder: (context, projSnap) {
+                    final cards = cardsSnap.data;
+                    final projects = projSnap.data;
+                    if (cards == null || projects == null) {
+                      return const LoadingView();
+                    }
+                    final titleById = {for (final p in projects) p.id: p.title};
+                    final groups = _group(cards, titleById);
+                    return groups.isEmpty
+                        ? EmptyState(
+                            icon: Icons.style_outlined,
+                            title: _query.isEmpty
+                                ? '还没有知识卡片'
+                                : '没有匹配「$_query」的卡片',
+                            message: _query.isEmpty
+                                ? '处理一个项目后这里会自动积累'
+                                : '换个关键词试试，或清空搜索查看全部',
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(
+                                Space.xl, 0, Space.xl, Space.xl),
+                            itemCount: groups.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: Space.m),
+                            itemBuilder: (_, i) => _groupSection(groups[i]),
+                          );
+                  },
+                );
+              },
+            ),
           ),
         ],
-      ),
-      body: StreamBuilder<List<KnowledgeCard>>(
-        stream: db.select(db.knowledgeCards).watch(),
-        builder: (context, cardsSnap) {
-          return StreamBuilder<List<Project>>(
-            stream: db.select(db.projects).watch(),
-            builder: (context, projSnap) {
-              final cards = cardsSnap.data;
-              final projects = projSnap.data;
-              if (cards == null || projects == null) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final titleById = {for (final p in projects) p.id: p.title};
-              final groups = _group(cards, titleById);
-              return Column(children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      hintText: '搜索词条/标题/内容',
-                      prefixIcon: Icon(Icons.search),
-                      isDense: true,
-                    ),
-                    onChanged: (v) => setState(() => _query = v),
-                  ),
-                ),
-                Expanded(
-                  child: groups.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.style_outlined,
-                                  size: 64, color: Colors.grey.shade600),
-                              const SizedBox(height: 8),
-                              Text(_query.isEmpty
-                                  ? '还没有知识卡片，处理一个项目后这里会自动积累'
-                                  : '没有匹配「$_query」的卡片'),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.only(bottom: 24),
-                          itemCount: groups.length,
-                          itemBuilder: (_, i) => _groupSection(groups[i]),
-                        ),
-                ),
-              ]);
-            },
-          );
-        },
       ),
     );
   }
@@ -135,29 +147,25 @@ class _CardsPageState extends ConsumerState<CardsPage> {
     return ExpansionTile(
       initiallyExpanded: true,
       title: Text(g.projectTitle,
-          style: const TextStyle(fontWeight: FontWeight.bold)),
+          style: Theme.of(context).textTheme.titleMedium),
       subtitle: Text('${g.cards.length} 张卡片'),
       children: [
         for (final c in g.cards)
           ListTile(
             dense: true,
+            shape: RoundedRectangleBorder(borderRadius: AppRadius.rMd),
             title: Row(children: [
-              Flexible(child: Text(c.term, overflow: TextOverflow.ellipsis)),
+              Flexible(
+                  child: Text(c.term,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall)),
               if (c.uncertain) ...[
-                const SizedBox(width: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                      color: Colors.orange.shade100,
-                      borderRadius: BorderRadius.circular(8)),
-                  child: Text('不确定',
-                      style: TextStyle(
-                          fontSize: 10, color: Colors.orange.shade900)),
-                ),
+                const SizedBox(width: Space.s),
+                const AppBadge('不确定', tone: BadgeTone.warning),
               ],
             ]),
-            subtitle: Text(c.content, maxLines: 3, overflow: TextOverflow.ellipsis),
+            subtitle: Text(c.content,
+                maxLines: 3, overflow: TextOverflow.ellipsis),
             onTap: () => _editCard(c),
           ),
       ],
@@ -183,11 +191,11 @@ class _CardsPageState extends ConsumerState<CardsPage> {
               TextField(
                   controller: termCtrl,
                   decoration: const InputDecoration(labelText: '词条')),
-              const SizedBox(height: 8),
+              const SizedBox(height: Space.s),
               TextField(
                   controller: titleCtrl,
                   decoration: const InputDecoration(labelText: '标题')),
-              const SizedBox(height: 8),
+              const SizedBox(height: Space.s),
               TextField(
                   controller: contentCtrl,
                   maxLines: 4,
@@ -203,22 +211,14 @@ class _CardsPageState extends ConsumerState<CardsPage> {
           actions: [
             TextButton(
               onPressed: () async {
-                final ok = await showDialog<bool>(
-                  context: ctx,
-                  builder: (c2) => AlertDialog(
-                    title: const Text('删除这张卡片？'),
-                    content: Text('「${card.term}」将从卡片集中移除。'),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(c2, false),
-                          child: const Text('取消')),
-                      FilledButton(
-                          onPressed: () => Navigator.pop(c2, true),
-                          child: const Text('删除')),
-                    ],
-                  ),
+                final ok = await ConfirmDialog.show(
+                  ctx,
+                  title: '删除这张卡片？',
+                  message: '「${card.term}」将从卡片集中移除。',
+                  confirmLabel: '删除',
+                  destructive: true,
                 );
-                if (ok != true) return;
+                if (!ok) return;
                 await (db.delete(db.knowledgeCards)
                       ..where((t) => t.id.equals(card.id)))
                     .go();
@@ -292,3 +292,4 @@ class _ProjectCards {
   final String projectTitle;
   final List<KnowledgeCard> cards;
 }
+
