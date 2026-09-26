@@ -36,6 +36,10 @@ class LibraryPage extends ConsumerStatefulWidget {
 class _LibraryPageState extends ConsumerState<LibraryPage> {
   int _dragging = 0;
 
+  /// 拖拽导入是桌面端能力，移动端空态文案不提
+  bool get _isDesktop =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
   Future<void> _importPackage(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final picked = await FilePicker.pickFiles(
@@ -247,9 +251,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                           ? EmptyState(
                               icon: Icons.movie_filter_outlined,
                               title: '还没有项目',
-                              message:
-                                  '导入视频或小说，陪析会自动完成字幕提取、转录与解说；'
-                                  '也可以把文件直接拖进窗口。',
+                              message: _isDesktop
+                                  ? '导入视频或小说，陪析会自动完成字幕提取、转录与解说；'
+                                      '也可以把文件直接拖进窗口。'
+                                  : '导入视频或小说，陪析会自动完成字幕提取、'
+                                      '转录与解说。',
                               actionLabel: '导入视频',
                               onAction: () => _importVideos(context, ref),
                             )

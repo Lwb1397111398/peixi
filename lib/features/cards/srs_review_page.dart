@@ -96,7 +96,10 @@ class _SrsReviewPageState extends ConsumerState<SrsReviewPage> {
     final done = _index >= _queue.length;
     return Scaffold(
       appBar: AppBar(title: Text(done ? '复习完成' : '复习 ${_index + 1}/${_queue.length}')),
-      body: done
+      // SafeArea(bottom)：四键评分/显示答案按钮贴底，必须避开系统导航栏
+      body: SafeArea(
+        top: false,
+        child: done
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -230,6 +233,7 @@ class _SrsReviewPageState extends ConsumerState<SrsReviewPage> {
                 ),
               ),
             ),
+        ),
     );
   }
 
