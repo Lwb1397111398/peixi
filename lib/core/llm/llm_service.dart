@@ -151,7 +151,10 @@ class LlmService {
     try {
       for (var attempt = 0; attempt < maxAttempts; attempt++) {
         if (attempt > 0) {
-          await Future.delayed(backoffBase * (1 << (attempt - 1))); // 1s/2s/4s
+          final backoff = backoffBase * (1 << (attempt - 1)); // 1s/2s/4s
+          // 自己触发的冷却优先于退避：冷却窗口内不要继续锤中转站
+          final cd = gate.cooldownRemaining;
+          await Future.delayed(cd > backoff ? cd : backoff);
         }
         try {
           final resp = await dio.post('$baseUrl/chat/completions',
@@ -179,7 +182,7 @@ class LlmService {
           if (_retryable(resp.statusCode)) {
             lastError = LlmException(msg, statusCode: resp.statusCode);
             if (resp.statusCode == 429) {
-              gate.cooldown(Duration(seconds: 5 + attempt * 5));
+              gate.cooldown(gate.cooldownFor(attempt));
             }
             continue;
           }
@@ -359,13 +362,22 @@ class LlmService {
     await _checkBudget();
     await gate.acquire();
     try {
-      final resp = await dio.post('${r.channel.baseUrl}/embeddings',
-          data: {'model': r.model, 'input': inputs},
-          options: Options(
-            validateStatus: (_) => true,
-            headers: {'Authorization': 'Bearer ${r.channel.apiKey}'},
-          ));
+      final Response resp;
+      try {
+        resp = await dio.post('${r.channel.baseUrl}/embeddings',
+            data: {'model': r.model, 'input': inputs},
+            options: Options(
+              validateStatus: (_) => true,
+              headers: {'Authorization': 'Bearer ${r.channel.apiKey}'},
+            ));
+      } on DioException catch (e) {
+        // 归一为 LlmException：调用方约定捕获 LlmException 静默跳过回忆层
+        throw LlmException('网络错误: ${e.message}');
+      }
       if (resp.statusCode != 200) {
+        if (resp.statusCode == 429) {
+          gate.cooldown(gate.cooldownFor(0));
+        }
         throw LlmException(
             _extractErrorMessage(resp.data) ?? 'HTTP ${resp.statusCode}',
             statusCode: resp.statusCode);
@@ -413,6 +425,18 @@ class LlmGate {
   DateTime _lastDispatch = DateTime.fromMillisecondsSinceEpoch(0);
   int _inFlight = 0;
 
+  /// 429 触发的冷却时长策略（attempt 从 0 计）。测试可注入缩短。
+  Duration Function(int attempt) cooldownFor =
+      (attempt) => Duration(seconds: 5 + attempt * 5);
+
+  /// 当前剩余冷却时长（未在冷却中为 Duration.zero）。
+  Duration get cooldownRemaining {
+    final now = DateTime.now();
+    return _cooldownUntil.isAfter(now)
+        ? _cooldownUntil.difference(now)
+        : Duration.zero;
+  }
+
   void updateLimits({int? maxConcurrent, Duration? minInterval}) {
     if (maxConcurrent != null && maxConcurrent >= 1) {
       this.maxConcurrent = maxConcurrent;
@@ -443,5 +467,8 @@ class LlmGate {
     }
   }
 
-  void release() => _inFlight--;
+  void release() {
+    assert(_inFlight > 0, 'release 与 acquire 必须配对');
+    _inFlight--;
+  }
 }

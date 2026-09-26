@@ -12,15 +12,16 @@ class SlowAdapter implements HttpClientAdapter {
   final int status;
   int inflight = 0;
   int maxInflight = 0;
-  final stops = <DateTime>[];
+  /// 每次 HTTP 派发（fetch 进入）时刻——度量"发出"而非"完成"。
+  final times = <DateTime>[];
 
   @override
   Future<ResponseBody> fetch(
       RequestOptions options, Stream<Uint8List>? s, Future? f) async {
+    times.add(DateTime.now());
     inflight++;
     if (inflight > maxInflight) maxInflight = inflight;
     await Future.delayed(const Duration(milliseconds: 60));
-    stops.add(DateTime.now());
     inflight--;
     return ResponseBody.fromString(
         '{"choices":[{"message":{"content":"ok"}}],"usage":{}}', status,
@@ -57,6 +58,7 @@ void main() {
         ])
     ]);
     expect(adapter.maxInflight, lessThanOrEqualTo(3));
+    expect(adapter.maxInflight, greaterThanOrEqualTo(2)); // 防止过度节流（全串行）
   });
 
   test('最小间隔：相邻请求发出时刻间隔 ≥ minInterval', () async {
@@ -70,25 +72,30 @@ void main() {
           {'role': 'user', 'content': 'hi'}
         ])
     ]);
-    final t = adapter.stops..sort();
+    final t = adapter.times..sort();
     for (var i = 1; i < t.length; i++) {
       expect(t[i].difference(t[i - 1]).inMilliseconds, greaterThanOrEqualTo(70));
     }
   });
 
-  test('429 冷却：首个 429 后下一请求被延后（重试成功，共 2 次 HTTP）', () async {
+  test('429 冷却：重试等到冷却结束（≥ 冷却时长）而非仅退避', () async {
     var calls = 0;
     final adapter = SlowAdapter(200);
     final svc = LlmService(
         dio: Dio()..httpClientAdapter = _Flaky429(adapter, () => calls++),
         db: db,
         backoffBase: const Duration(milliseconds: 10))
-      ..updateRouting(routing());
+      ..updateRouting(routing())
+      ..gate.cooldownFor = (_) => const Duration(milliseconds: 200);
     final out = await svc.chat(const [
       {'role': 'user', 'content': 'hi'}
     ]);
     expect(out, 'ok');
     expect(calls, 2);
+    final t = adapter.times..sort();
+    final gap = t[1].difference(t[0]).inMilliseconds;
+    expect(gap, greaterThanOrEqualTo(150), reason: '重试必须等待 200ms 冷却（而非 10ms 退避）');
+    expect(gap, lessThan(2000), reason: '冷却策略已注入缩短，不应等默认 5s');
   });
 }
 
@@ -101,10 +108,13 @@ class _Flaky429 implements HttpClientAdapter {
   @override
   Future<ResponseBody> fetch(
       RequestOptions o, Stream<Uint8List>? s, Future? f) async {
-    if (onCall() == 0) {
+    final n = onCall();
+    if (n == 0) {
+      // 429 分支不经过 inner，这里补记派发时刻
+      inner.times.add(DateTime.now());
       return ResponseBody.fromString('{"error":{"message":"rate"}}', 429);
     }
-    return inner.fetch(o, s, f);
+    return inner.fetch(o, s, f); // inner 在 fetch 入口自记派发时刻
   }
 
   @override

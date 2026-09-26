@@ -209,6 +209,56 @@ void main() {
     await expectLater(bare.embed(['x']), throwsA(isA<LlmException>()));
   });
 
+  test('embed：网络异常归一为 LlmException（调用方可静默跳过回忆层）', () async {
+    final (dio, _) = dioWith([
+      TestResp(0, null,
+          error: DioException(
+            requestOptions: RequestOptions(path: '/embeddings'),
+            message: 'net down',
+          )),
+    ]);
+    final svc = LlmService(dio: dio, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true)
+        ],
+        slots: {LlmSlot.embedding: SlotBinding(channelId: 1, model: 'text-embedding-3')},
+      ));
+    await expectLater(
+        svc.embed(['x']),
+        throwsA(isA<LlmException>()
+            .having((e) => e.message, 'message', contains('net down'))));
+  });
+
+  test('缓存隔离：不同渠道 baseUrl 同模型同消息不串缓存（2 次 HTTP）', () async {
+    final (dio, adapter) = dioWith([
+      TestResp(200, chatBody('{"src":"a"}')),
+      TestResp(200, chatBody('{"src":"b"}')),
+    ]);
+    final svc = LlmService(dio: dio, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true),
+        ],
+        slots: {LlmSlot.analysis: SlotBinding(channelId: 1, model: 'deepseek-v3')},
+      ));
+    final r1 = await svc.chatJson(const [
+      {'role': 'user', 'content': 'x'}
+    ]);
+    svc.updateRouting(const RoutingTable(
+      channels: [
+        ChannelRoute(id: 2, name: 'B', baseUrl: 'https://b/v1', apiKey: 'k', enabled: true),
+      ],
+      slots: {LlmSlot.analysis: SlotBinding(channelId: 2, model: 'deepseek-v3')},
+    ));
+    final r2 = await svc.chatJson(const [
+      {'role': 'user', 'content': 'x'}
+    ]);
+    expect(adapter.calls, 2); // 若键未含 baseUrl，第二次会命中缓存仅 1 次
+    expect(r1, {'src': 'a'});
+    expect(r2, {'src': 'b'});
+  });
+
   test('fetchModels：GET /models 返回模型 id 列表', () async {
     final (dio, adapter) = dioWith([
       TestResp(200, '{"data":[{"id":"m1"},{"id":"m2"}]}'),
