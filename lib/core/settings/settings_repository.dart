@@ -70,6 +70,25 @@ class SettingsRepository {
     await _set(_kModelStandard, c.modelStandard);
     await _set(_kModelVision, c.modelVision);
     await _secure.write(key: _sApiKey, value: c.apiKey);
+    // 渠道化过渡：旧设置页保存时同步回首个渠道与三槽位，避免重启后被
+    // 冻结的渠道表回退（Group D 重写设置页后本段随迁移期一并移除）。
+    if (await _get(_kChannelsMigrated) != null) {
+      final channels = await loadChannels();
+      if (channels.isNotEmpty) {
+        final ch = channels.first;
+        await updateChannel(ch.id,
+            name: ch.name,
+            baseUrl: c.baseUrl,
+            apiKey: c.apiKey,
+            enabled: ch.enabled);
+        await saveSlot(LlmSlot.summary,
+            channelId: ch.id, model: c.modelCheap);
+        await saveSlot(LlmSlot.analysis,
+            channelId: ch.id, model: c.modelStandard);
+        await saveSlot(LlmSlot.vision,
+            channelId: ch.id, model: c.modelVision);
+      }
+    }
   }
 
   Future<OssConfig?> loadOssConfig() async {
@@ -144,9 +163,11 @@ class SettingsRepository {
       _set(_kLlmBudget, tokens.toString());
 
   /// 并发/频控：并发数默认 2（1~8），请求最小间隔默认 0ms。
+  /// 读取侧与写入侧同样钳制，防外部/手改脏值直入闸门。
   Future<(int, int)> loadLlmLimits() async => (
-        int.tryParse(await _get(_kLlmConcurrency) ?? '') ?? 2,
-        int.tryParse(await _get(_kLlmMinInterval) ?? '') ?? 0,
+        (int.tryParse(await _get(_kLlmConcurrency) ?? '') ?? 2).clamp(1, 8),
+        (int.tryParse(await _get(_kLlmMinInterval) ?? '') ?? 0)
+            .clamp(0, 10000),
       );
 
   Future<void> saveLlmLimits(

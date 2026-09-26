@@ -64,6 +64,57 @@ void main() {
     expect(r.slots, isEmpty);
   });
 
+  test('迁移后经旧设置页 saveApiConfig 编辑：同步回渠道与三槽位，重启不回退', () async {
+    await repo.saveApiConfig(const ApiConfig(
+        baseUrl: 'https://old/v1',
+        apiKey: 'sk-old',
+        modelCheap: 'flash-x',
+        modelStandard: 'plus-x',
+        modelVision: 'vl-x'));
+    await repo.loadRouting(); // 触发一次性迁移（此后旗标已置位）
+    // 旧设置页编辑并保存（saveApiConfig 路径）
+    await repo.saveApiConfig(const ApiConfig(
+        baseUrl: 'https://new/v1',
+        apiKey: 'sk-new',
+        modelCheap: 'flash-n',
+        modelStandard: 'plus-n',
+        modelVision: 'vl-n'));
+    // 模拟重启：repo 无内存状态，再次 loadRouting 等价重启后装配
+    final r = await repo.loadRouting();
+    expect(r.channels.single.baseUrl, 'https://new/v1');
+    // apiKey 走 secure storage 路径（loadRouting 从 _channelKey 读出）
+    expect(r.channels.single.apiKey, 'sk-new');
+    expect(r.slots[LlmSlot.summary]!.model, 'flash-n');
+    expect(r.slots[LlmSlot.analysis]!.model, 'plus-n');
+    expect(r.slots[LlmSlot.vision]!.model, 'vl-n');
+    // 槽位仍绑定到迁移出的那条渠道，而不是悬空回落
+    expect(r.slots[LlmSlot.analysis]!.channelId, r.channels.single.id);
+  });
+
+  test('迁移后删光渠道再经旧设置页保存：不崩溃、不复活渠道，仅旧键更新', () async {
+    await repo.saveApiConfig(const ApiConfig(
+        baseUrl: 'https://old/v1',
+        apiKey: 'sk-old',
+        modelCheap: 'flash-x',
+        modelStandard: 'plus-x',
+        modelVision: 'vl-x'));
+    final r0 = await repo.loadRouting(); // 触发迁移
+    await repo.deleteChannel(r0.channels.single.id);
+    await repo.saveApiConfig(const ApiConfig(
+        baseUrl: 'https://new/v1',
+        apiKey: 'sk-new',
+        modelCheap: 'flash-n',
+        modelStandard: 'plus-n',
+        modelVision: 'vl-n'));
+    final r = await repo.loadRouting();
+    expect(r.channels, isEmpty);
+    expect(r.slots, isEmpty);
+    // 旧键照常更新，旧设置页自身读数正确
+    final cfg = await repo.loadApiConfig();
+    expect(cfg.baseUrl, 'https://new/v1');
+    expect(cfg.apiKey, 'sk-new');
+  });
+
   test('损坏的槽位串被丢弃：loadRouting 不抛异常也不含该槽位', () async {
     await db.into(db.settings).insert(
         SettingsCompanion.insert(key: 'llm.slot.analysis', value: 'abc:'));
@@ -87,5 +138,19 @@ void main() {
     expect(await repo.loadLlmLimits(), (1, 10000));
     await repo.saveLlmLimits(concurrency: 99, minIntervalMs: -5);
     expect(await repo.loadLlmLimits(), (8, 0));
+  });
+
+  test('并发/频控：外部直写越界脏值，读取侧同样钳制', () async {
+    await db.into(db.settings).insert(
+        SettingsCompanion.insert(key: 'llm.concurrency', value: '600000'));
+    await db.into(db.settings).insert(SettingsCompanion.insert(
+        key: 'llm.min_request_interval_ms', value: '-999'));
+    expect(await repo.loadLlmLimits(), (8, 0));
+    await db.into(db.settings).insertOnConflictUpdate(
+        SettingsCompanion.insert(key: 'llm.concurrency', value: '0'));
+    await db.into(db.settings).insertOnConflictUpdate(
+        SettingsCompanion.insert(
+            key: 'llm.min_request_interval_ms', value: '600000'));
+    expect(await repo.loadLlmLimits(), (1, 10000));
   });
 }

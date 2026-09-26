@@ -40,6 +40,9 @@ class RoutingTable {
     LlmSlot.vision: 'qwen-vl-plus',
   };
 
+  /// 槽位未绑定时的默认模型名。
+  static String fallbackModelFor(LlmSlot slot) => _fallbackModel[slot]!;
+
   ChannelRoute? _byId(int id) {
     for (final c in channels) {
       if (c.id == id) return c;

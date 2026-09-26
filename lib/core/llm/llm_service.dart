@@ -50,7 +50,7 @@ class LlmService {
   /// 当前槽位解析出的模型名（评论落库 model 字段用；未配置返回 null）。
   String? modelOf(LlmSlot slot) => _routing?.resolve(slot)?.model;
 
-  /// 兼容垫片：旧单配置 → 单渠道路由表（仅旧测试/迁移期使用，Group C 移除）。
+  /// 兼容垫片：旧单配置 → 单渠道路由表（仅旧测试/迁移期使用，Group D 移除）。
   void updateConfig(ApiConfig config) {
     _config = config; // 供已废弃的 config getter 与 testConnection 过渡期使用
     updateRouting(RoutingTable(

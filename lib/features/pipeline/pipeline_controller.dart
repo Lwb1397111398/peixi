@@ -110,7 +110,9 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       commentary: (id) => CommentaryGenerator(
         db: db,
         llm: llm,
-        modelStandard: () => llm.modelOf(LlmSlot.analysis) ?? 'qwen-plus',
+        modelStandard: () =>
+            llm.modelOf(LlmSlot.analysis) ??
+            RoutingTable.fallbackModelFor(LlmSlot.analysis),
         isCancelled: () => e.isCancelled(id),
         onProgress: (done, total) => _onEvent(PipelineEvent(
             projectId: id,

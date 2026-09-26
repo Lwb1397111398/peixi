@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_service.dart';
@@ -23,14 +24,20 @@ final llmServiceProvider = Provider<LlmService>((ref) {
   final svc = LlmService(db: ref.watch(databaseProvider));
   // 启动时武装路由表与并发闸门；设置页保存渠道/槽位/限流后会再次调用
   Future(() async {
-    final repo = ref.read(settingsRepoProvider);
-    // 兼容桥：旧设置页/测试连接仍读单配置（Group D 重写设置页后移除）；
-    // 必须先于 updateRouting——updateConfig 内部会用单渠道路由表覆盖 _routing
-    svc.updateConfig(await repo.loadApiConfig());
-    svc.updateRouting(await repo.loadRouting());
-    final (conc, minMs) = await repo.loadLlmLimits();
-    svc.gate.updateLimits(
-        maxConcurrent: conc, minInterval: Duration(milliseconds: minMs));
+    try {
+      final repo = ref.read(settingsRepoProvider);
+      // 兼容桥：旧设置页/测试连接仍读单配置（Group D 重写设置页后移除）；
+      // 必须先于 updateRouting——updateConfig 内部会用单渠道路由表覆盖 _routing
+      svc.updateConfig(await repo.loadApiConfig());
+      svc.updateRouting(await repo.loadRouting());
+      final (conc, minMs) = await repo.loadLlmLimits();
+      svc.gate.updateLimits(
+          maxConcurrent: conc, minInterval: Duration(milliseconds: minMs));
+    } catch (e) {
+      // secure storage 等在 Windows 上可能抛错；吞掉会让 LLM 报出难排查的
+      // "未配置"，这里至少留一条日志。
+      debugPrint('LLM 启动装配失败: $e');
+    }
   });
   return svc;
 });
