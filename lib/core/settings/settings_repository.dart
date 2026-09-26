@@ -1,5 +1,7 @@
+import 'package:drift/drift.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/settings/api_config.dart';
 
 /// 明文偏好（settings 表）与机密（secure storage）的统一读写入口。
@@ -152,6 +154,114 @@ class SettingsRepository {
   Future<void> saveWindowBounds(
       double left, double top, double width, double height) async {
     await _set(_kWindowBounds, '$left,$top,$width,$height');
+  }
+
+  // ---- 渠道与槽位 ----
+  static String _channelKey(int id) => 'llm.channel.$id.api_key';
+
+  Future<List<LlmChannel>> loadChannels() =>
+      (_db.select(_db.llmChannels)..orderBy([(c) => OrderingTerm.asc(c.id)]))
+          .get();
+
+  Future<int> addChannel(
+      {required String name,
+      required String baseUrl,
+      required String apiKey,
+      bool enabled = true}) async {
+    final id = await _db.into(_db.llmChannels).insert(LlmChannelsCompanion.insert(
+        name: name, baseUrl: baseUrl, enabled: Value(enabled)));
+    await _secure.write(key: _channelKey(id), value: apiKey);
+    return id;
+  }
+
+  Future<void> updateChannel(int id,
+      {required String name,
+      required String baseUrl,
+      required String apiKey,
+      required bool enabled}) async {
+    await (_db.update(_db.llmChannels)..where((t) => t.id.equals(id))).write(
+        LlmChannelsCompanion(
+            name: Value(name),
+            baseUrl: Value(baseUrl),
+            enabled: Value(enabled)));
+    await _secure.write(key: _channelKey(id), value: apiKey);
+  }
+
+  Future<void> deleteChannel(int id) async {
+    await (_db.delete(_db.llmChannels)..where((t) => t.id.equals(id))).go();
+    await _secure.delete(key: _channelKey(id));
+    // 清掉指向该渠道的槽位绑定（槽位回落默认渠道）
+    for (final s in LlmSlot.values) {
+      final b = await loadSlot(s);
+      if (b?.channelId == id) {
+        await (_db.delete(_db.settings)
+              ..where((t) => t.key.equals('llm.slot.${s.name}')))
+            .go();
+      }
+    }
+  }
+
+  Future<void> saveSlot(LlmSlot slot,
+          {required int channelId, required String model}) =>
+      _set('llm.slot.${slot.name}', '$channelId:$model');
+
+  Future<({int channelId, String model})?> loadSlot(LlmSlot slot) async {
+    final raw = await _get('llm.slot.${slot.name}');
+    if (raw == null) return null;
+    final i = raw.indexOf(':');
+    if (i <= 0) return null;
+    final cid = int.tryParse(raw.substring(0, i));
+    final model = raw.substring(i + 1);
+    if (cid == null || model.isEmpty) return null;
+    return (channelId: cid, model: model);
+  }
+
+  /// 组装路由表。首次调用时把旧单配置（llm.base_url/api_key/三模型）迁移为
+  /// "默认渠道 + 三槽位"；从未配置过则返回空表。
+  Future<RoutingTable> loadRouting() async {
+    await _migrateLegacyConfigIfNeeded();
+    final channels = <ChannelRoute>[];
+    for (final row in await loadChannels()) {
+      final key = await _secure.read(key: _channelKey(row.id)) ?? '';
+      channels.add(ChannelRoute(
+          id: row.id,
+          name: row.name,
+          baseUrl: row.baseUrl,
+          apiKey: key,
+          enabled: row.enabled));
+    }
+    final slots = <LlmSlot, SlotBinding>{};
+    for (final s in LlmSlot.values) {
+      final b = await loadSlot(s);
+      if (b != null) {
+        slots[s] = SlotBinding(channelId: b.channelId, model: b.model);
+      }
+    }
+    return RoutingTable(channels: channels, slots: slots);
+  }
+
+  Future<void> _migrateLegacyConfigIfNeeded() async {
+    if ((await loadChannels()).isNotEmpty) return;
+    final baseUrl = await _get(_kBaseUrl);
+    final apiKey = await _secure.read(key: _sApiKey);
+    if ((baseUrl == null || baseUrl.isEmpty) &&
+        (apiKey == null || apiKey.isEmpty)) {
+      return;
+    }
+    final id = await addChannel(
+        name: '默认渠道',
+        baseUrl: baseUrl ?? ApiConfig.bailianBaseUrl,
+        apiKey: apiKey ?? '');
+    for (final (slot, key) in [
+      (LlmSlot.summary, _kModelCheap),
+      (LlmSlot.analysis, _kModelStandard),
+      (LlmSlot.vision, _kModelVision),
+    ]) {
+      final model = await _get(key);
+      if (model != null && model.isNotEmpty) {
+        await saveSlot(slot, channelId: id, model: model);
+      }
+    }
   }
 }
 
