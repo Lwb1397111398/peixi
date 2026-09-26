@@ -175,6 +175,15 @@ class LlmCache extends Table {
   Set<Column> get primaryKey => {key};
 }
 
+/// LLM 渠道（OpenAI 兼容中转站）。api_key 存 secure storage（键 llm.channel.<id>.api_key）。
+class LlmChannels extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text()();
+  TextColumn get baseUrl => text()();
+  BoolColumn get enabled => boolean().withDefault(const Constant(true))();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
 @DriftDatabase(tables: [
   Projects,
   Characters,
@@ -190,12 +199,13 @@ class LlmCache extends Table {
   Settings,
   LlmLogs,
   LlmCache,
+  LlmChannels,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -215,6 +225,10 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(knowledgeCards, knowledgeCards.lapses);
             await m.addColumn(knowledgeCards, knowledgeCards.lastReviewAt);
             await m.createTable(llmCache);
+          }
+          if (from < 4) {
+            // v3→v4：LLM 渠道表（渠道化模型管理，api_key 在 secure storage）
+            await m.createTable(llmChannels);
           }
         },
         beforeOpen: (details) async {
