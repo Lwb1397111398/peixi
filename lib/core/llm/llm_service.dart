@@ -347,6 +347,62 @@ class LlmService {
     final first = ((data[0] as Map)['id'] ?? '?').toString();
     return '连接成功，可用模型 ${data.length} 个（如 $first）';
   }
+
+  /// 语义向量（OpenAI 兼容 /embeddings）。语义回忆模块专用；未绑定 embedding
+  /// 槽位时抛 LlmException（调用方捕获后静默跳过回忆层）。
+  Future<List<List<double>>> embed(List<String> inputs,
+      {String purpose = 'embed', int? projectId}) async {
+    final r = _routing?.resolve(LlmSlot.embedding);
+    if (r == null) {
+      throw LlmException('未配置 embedding 模型（设置页 → 功能槽位）');
+    }
+    await _checkBudget();
+    await gate.acquire();
+    try {
+      final resp = await dio.post('${r.channel.baseUrl}/embeddings',
+          data: {'model': r.model, 'input': inputs},
+          options: Options(
+            validateStatus: (_) => true,
+            headers: {'Authorization': 'Bearer ${r.channel.apiKey}'},
+          ));
+      if (resp.statusCode != 200) {
+        throw LlmException(
+            _extractErrorMessage(resp.data) ?? 'HTTP ${resp.statusCode}',
+            statusCode: resp.statusCode);
+      }
+      final data = (resp.data as Map)['data'] as List;
+      final usage = ((resp.data as Map)['usage'] as Map?) ?? const {};
+      await db.into(db.llmLogs).insert(LlmLogsCompanion.insert(
+            projectId: Value(projectId),
+            purpose: purpose,
+            model: r.model,
+            promptTokens: Value((usage['prompt_tokens'] as int?) ?? 0),
+            completionTokens: Value((usage['completion_tokens'] as int?) ?? 0),
+          ));
+      return [
+        for (final d in data)
+          [for (final v in (d['embedding'] as List)) (v as num).toDouble()]
+      ];
+    } finally {
+      gate.release();
+    }
+  }
+
+  /// 拉取渠道模型列表（设置页「测试连接/抓取模型」共用）。
+  Future<List<String>> fetchModels(ChannelRoute channel) async {
+    final resp = await dio.get('${channel.baseUrl}/models',
+        options: Options(
+          validateStatus: (_) => true,
+          headers: {'Authorization': 'Bearer ${channel.apiKey}'},
+        ));
+    if (resp.statusCode != 200) {
+      throw LlmException('HTTP ${resp.statusCode}', statusCode: resp.statusCode);
+    }
+    return [
+      for (final m in ((resp.data as Map)['data'] as List))
+        ((m as Map)['id'] ?? '').toString()
+    ]..removeWhere((s) => s.isEmpty);
+  }
 }
 
 /// 全局并发/频控闸门：所有 LLM 调用共用，防止压垮限速中转站。

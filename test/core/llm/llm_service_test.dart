@@ -185,4 +185,38 @@ void main() {
         ], slot: LlmSlot.analysis),
         throwsA(isA<LlmException>()));
   });
+
+  test('embed：POST /embeddings 返回向量矩阵；未绑定槽位抛可读异常', () async {
+    final (dio, adapter) = dioWith([
+      TestResp(
+          200,
+          '{"data":[{"embedding":[0.1,0.2]},{"embedding":[0.3,0.4]}],"usage":{}}'),
+    ]);
+    final svc = LlmService(dio: dio, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true)
+        ],
+        slots: {LlmSlot.embedding: SlotBinding(channelId: 1, model: 'text-embedding-3')},
+      ));
+    final vs = await svc.embed(['一', '二']);
+    expect(vs.length, 2);
+    expect(vs[1], [0.3, 0.4]);
+    expect(adapter.requests.single.path, 'https://a/v1/embeddings');
+    expect((adapter.requests.single.data as Map)['model'], 'text-embedding-3');
+
+    final bare = LlmService(dio: Dio(), db: db);
+    await expectLater(bare.embed(['x']), throwsA(isA<LlmException>()));
+  });
+
+  test('fetchModels：GET /models 返回模型 id 列表', () async {
+    final (dio, adapter) = dioWith([
+      TestResp(200, '{"data":[{"id":"m1"},{"id":"m2"}]}'),
+    ]);
+    final svc = LlmService(dio: dio, db: db);
+    final models = await svc.fetchModels(const ChannelRoute(
+        id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true));
+    expect(models, ['m1', 'm2']);
+    expect(adapter.requests.single.path, 'https://a/v1/models');
+  });
 }
