@@ -21,10 +21,16 @@ final settingsRepoProvider =
 
 final llmServiceProvider = Provider<LlmService>((ref) {
   final svc = LlmService(db: ref.watch(databaseProvider));
-  // 启动时用已存配置武装 LLM；设置页保存后会再次 updateConfig
+  // 启动时武装路由表与并发闸门；设置页保存渠道/槽位/限流后会再次调用
   Future(() async {
-    final cfg = await ref.read(settingsRepoProvider).loadApiConfig();
-    svc.updateConfig(cfg);
+    final repo = ref.read(settingsRepoProvider);
+    // 兼容桥：旧设置页/测试连接仍读单配置（Group D 重写设置页后移除）；
+    // 必须先于 updateRouting——updateConfig 内部会用单渠道路由表覆盖 _routing
+    svc.updateConfig(await repo.loadApiConfig());
+    svc.updateRouting(await repo.loadRouting());
+    final (conc, minMs) = await repo.loadLlmLimits();
+    svc.gate.updateLimits(
+        maxConcurrent: conc, minInterval: Duration(milliseconds: minMs));
   });
   return svc;
 });

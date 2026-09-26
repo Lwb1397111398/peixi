@@ -75,4 +75,17 @@ void main() {
     final r = await repo.loadRouting();
     expect(r.channels, isEmpty);
   });
+
+  test('并发/频控：未配置时返回默认 (2, 0)', () async {
+    final (conc, minMs) = await repo.loadLlmLimits();
+    expect(conc, 2);
+    expect(minMs, 0);
+  });
+
+  test('并发/频控：保存后读回；越界值被钳制到 1~8 / 0~10000', () async {
+    await repo.saveLlmLimits(concurrency: 0, minIntervalMs: 20000);
+    expect(await repo.loadLlmLimits(), (1, 10000));
+    await repo.saveLlmLimits(concurrency: 99, minIntervalMs: -5);
+    expect(await repo.loadLlmLimits(), (8, 0));
+  });
 }

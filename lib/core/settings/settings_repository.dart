@@ -38,6 +38,9 @@ class SettingsRepository {
   static const _kAsrMode = 'asr.mode';
   // LLM 月度 token 预算（0 = 不限）
   static const _kLlmBudget = 'llm.monthly_budget_tokens';
+  // 并发/频控：并发数默认 2（钳制 1~8），请求最小间隔默认 0ms（钳制 0~10000）
+  static const _kLlmConcurrency = 'llm.concurrency';
+  static const _kLlmMinInterval = 'llm.min_request_interval_ms';
   // 主题模式 'system' | 'light' | 'dark'（core 层不依赖 material，存原始串）
   static const _kThemeMode = 'app.theme_mode';
   // 桌面窗口边界 'left,top,width,height'
@@ -139,6 +142,18 @@ class SettingsRepository {
 
   Future<void> saveLlmBudgetTokens(int tokens) async =>
       _set(_kLlmBudget, tokens.toString());
+
+  /// 并发/频控：并发数默认 2（1~8），请求最小间隔默认 0ms。
+  Future<(int, int)> loadLlmLimits() async => (
+        int.tryParse(await _get(_kLlmConcurrency) ?? '') ?? 2,
+        int.tryParse(await _get(_kLlmMinInterval) ?? '') ?? 0,
+      );
+
+  Future<void> saveLlmLimits(
+      {required int concurrency, required int minIntervalMs}) async {
+    await _set(_kLlmConcurrency, concurrency.clamp(1, 8).toString());
+    await _set(_kLlmMinInterval, minIntervalMs.clamp(0, 10000).toString());
+  }
 
   Future<String> loadThemeModeRaw() async => await _get(_kThemeMode) ?? 'light';
 
