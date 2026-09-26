@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/llm/prompts.dart';
 import 'package:peixi/core/settings/api_config.dart';
@@ -91,7 +92,7 @@ class CommentaryGenerator {
                     newScene: sc.l1Subtext),
               },
             ],
-            tier: LlmTier.cheap,
+            slot: LlmSlot.summary,
             purpose: 'digest',
             projectId: projectId,
           );
@@ -142,7 +143,7 @@ class CommentaryGenerator {
           'content': Prompts.sceneCommentary(digest: digest, dialogues: dialogue),
         },
       ],
-      tier: LlmTier.standard,
+      slot: LlmSlot.analysis,
       purpose: 'commentary',
       projectId: projectId,
     );
@@ -208,7 +209,7 @@ class CommentaryGenerator {
                     context: '$title · ${summary.isEmpty ? l1 : summary}'),
               },
             ],
-            tier: LlmTier.standard,
+            slot: LlmSlot.analysis,
             purpose: 'card',
             projectId: projectId,
           );

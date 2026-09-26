@@ -9,6 +9,7 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:peixi/core/asr/asr_client.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
@@ -124,7 +125,7 @@ void main() {
     try {
       await llm.chat(
           [const {'role': 'user', 'content': '你好'}],
-          tier: LlmTier.cheap);
+          slot: LlmSlot.summary);
     } catch (e) {
       caught = e;
     }

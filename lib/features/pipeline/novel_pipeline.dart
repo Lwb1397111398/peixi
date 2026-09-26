@@ -4,9 +4,9 @@ import 'dart:async';
 
 import 'package:drift/drift.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/llm/prompts.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 
@@ -205,7 +205,7 @@ class NovelCharacterExtractor {
               chapterTitle: ch.title ?? '第${ch.idx + 1}部分',
               chapterText: text),
         }
-      ], tier: LlmTier.cheap, purpose: 'novel_cast', projectId: projectId);
+      ], slot: LlmSlot.summary, purpose: 'novel_cast', projectId: projectId);
 
       for (final c in (result['characters'] as List? ?? []).cast<Map>()) {
         final name = (c['name'] ?? '').toString().trim();

@@ -4,6 +4,7 @@ import 'package:drift/native.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/settings/api_config.dart';
 
@@ -80,7 +81,7 @@ void main() {
     final svc = LlmService(dio: dio, db: db)..updateConfig(cfg());
     await svc.chatJson(const [
       {'role': 'user', 'content': '输出 json'}
-    ], tier: LlmTier.cheap, purpose: '映射');
+    ], slot: LlmSlot.summary, purpose: '映射');
     final req = adapter.requests.single;
     expect((req.data as Map)['model'], 'qwen-flash');
     expect((req.data as Map)['response_format'], {'type': 'json_object'});
@@ -157,5 +158,31 @@ void main() {
     final (dio, _) = dioWith([TestResp(200, '{"data":[{"id":"qwen-plus"}]}')]);
     final svc = LlmService(dio: dio, db: db)..updateConfig(cfg());
     expect(await svc.testConnection(), contains('qwen-plus'));
+  });
+
+  test('槽位解析：请求发到绑定渠道的 baseUrl/模型/key', () async {
+    final (dio, adapter) = dioWith([TestResp(200, chatBody('ok'))]);
+    final svc = LlmService(dio: dio, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'B', baseUrl: 'https://b/v1', apiKey: 'sk-b', enabled: true),
+        ],
+        slots: {LlmSlot.analysis: SlotBinding(channelId: 1, model: 'deepseek-v3')},
+      ));
+    await svc.chat(const [
+      {'role': 'user', 'content': 'hi'}
+    ], slot: LlmSlot.analysis);
+    expect(adapter.requests.single.path, 'https://b/v1/chat/completions');
+    expect((adapter.requests.single.data as Map)['model'], 'deepseek-v3');
+    expect(adapter.requests.single.headers['Authorization'], 'Bearer sk-b');
+  });
+
+  test('槽位解析失败：抛可读异常', () async {
+    final svc = LlmService(dio: Dio(), db: db);
+    await expectLater(
+        svc.chat(const [
+          {'role': 'user', 'content': 'hi'}
+        ], slot: LlmSlot.analysis),
+        throwsA(isA<LlmException>()));
   });
 }

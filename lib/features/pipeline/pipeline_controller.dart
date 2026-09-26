@@ -110,6 +110,7 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       commentary: (id) => CommentaryGenerator(
         db: db,
         llm: llm,
+        // ignore: deprecated_member_use // 渠道化过渡：Task 7 随 loadRouting 一并移除
         apiConfig: () => llm.config ?? fallback,
         isCancelled: () => e.isCancelled(id),
         onProgress: (done, total) => _onEvent(PipelineEvent(

@@ -4,9 +4,9 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/llm/prompts.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 
@@ -117,7 +117,7 @@ class NovelCommentaryGenerator {
           paraEnd: endPara,
         ),
       }
-    ], tier: LlmTier.standard, purpose: 'novel_annotate', projectId: projectId);
+    ], slot: LlmSlot.analysis, purpose: 'novel_annotate', projectId: projectId);
 
     final annotations =
         (result['annotations'] as List? ?? []).cast<Map>();
@@ -226,7 +226,7 @@ class NovelCommentaryGenerator {
           'content': Prompts.rollingDigest(
               oldDigest: oldDigest ?? '（无）', newScene: newScene),
         }
-      ], tier: LlmTier.cheap, purpose: 'novel_digest');
+      ], slot: LlmSlot.summary, purpose: 'novel_digest');
       return (r['digest'] ?? '').toString();
     } catch (_) {
       // 摘要失败不影响批注主线：直接拼接旧摘要（截断防膨胀）

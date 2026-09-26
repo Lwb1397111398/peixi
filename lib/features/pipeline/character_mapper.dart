@@ -1,7 +1,7 @@
 import 'package:drift/drift.dart' show Value;
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/llm/prompts.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 
@@ -44,7 +44,7 @@ class CharacterMapper {
               filename: meta.sourceFilename ?? p.title, dialogueLines: dialogue),
         },
       ],
-      tier: LlmTier.cheap,
+      slot: LlmSlot.summary,
       purpose: 'map',
       projectId: projectId,
     );
