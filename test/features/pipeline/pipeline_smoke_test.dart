@@ -69,7 +69,7 @@ void main() {
     await CommentaryGenerator(
             db: db,
             llm: llm,
-            apiConfig: () => const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'))
+            modelStandard: () => 'qwen-plus')
         .generate(id);
 
     expect((await db.select(db.characters).get()).single.name, '余则成');

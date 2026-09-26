@@ -8,6 +8,7 @@ import 'package:peixi/core/asr/asr_model_controller.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
 import 'package:peixi/core/novel/epub_parser.dart';
@@ -103,15 +104,13 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     // S6/S8/S9 协作器装配（偏离：引擎不直接依赖 LLM，保持可测）
     final llm = ref.read(llmServiceProvider);
     final db = ref.read(databaseProvider);
-    final fallback = await ref.read(settingsRepoProvider).loadApiConfig();
     e.attachCollaborators(
       map: (id) => CharacterMapper(db: db, llm: llm).map(id),
       segment: (id) => SceneWriter(db).writeScenes(id),
       commentary: (id) => CommentaryGenerator(
         db: db,
         llm: llm,
-        // ignore: deprecated_member_use // 渠道化过渡：Task 7 随 loadRouting 一并移除
-        apiConfig: () => llm.config ?? fallback,
+        modelStandard: () => llm.modelOf(LlmSlot.analysis) ?? 'qwen-plus',
         isCancelled: () => e.isCancelled(id),
         onProgress: (done, total) => _onEvent(PipelineEvent(
             projectId: id,

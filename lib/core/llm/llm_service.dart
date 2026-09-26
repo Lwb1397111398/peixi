@@ -70,10 +70,6 @@ class LlmService {
     ));
   }
 
-  /// 当前配置（协作器读取模型名等；未配置时为 null）
-  @Deprecated('渠道化后由 loadRouting 驱动，Task 7 移除')
-  ApiConfig? get config => _config;
-
   /// 并发/频控闸门：所有 LLM 调用共用，防止压垮限速中转站。
   final LlmGate gate = LlmGate();
 

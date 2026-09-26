@@ -31,8 +31,8 @@ void main() {
     final cfg = await repo.loadApiConfig();
     expect(cfg.apiKey, 'sk-test-123');
     expect(cfg.baseUrl, ApiConfig.bailianBaseUrl);
-    expect(cfg.modelOf(LlmTier.cheap), 'qwen-flash');
-    expect(cfg.modelOf(LlmTier.standard), 'qwen-plus');
+    expect(cfg.modelCheap, 'qwen-flash');
+    expect(cfg.modelStandard, 'qwen-plus');
   });
 
   test('空配置返回默认值', () async {

@@ -93,7 +93,7 @@ void main() {
       ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
     final id = await seed();
 
-    await CommentaryGenerator(db: db, llm: llm, apiConfig: () => const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'))
+    await CommentaryGenerator(db: db, llm: llm, modelStandard: () => 'qwen-plus')
         .generate(id);
 
     final userMsgs = adapter.requests
@@ -132,7 +132,7 @@ void main() {
       ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
     final id = await seed();
 
-    await CommentaryGenerator(db: db, llm: llm, apiConfig: () => const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'))
+    await CommentaryGenerator(db: db, llm: llm, modelStandard: () => 'qwen-plus')
         .generate(id);
 
     var commentaries = await db.select(db.commentaries).get();
@@ -146,7 +146,7 @@ void main() {
     ]);
     final llm2 = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter2)
       ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
-    await CommentaryGenerator(db: db, llm: llm2, apiConfig: () => const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'))
+    await CommentaryGenerator(db: db, llm: llm2, modelStandard: () => 'qwen-plus')
         .generate(id);
 
     commentaries = await db.select(db.commentaries).get();
@@ -168,8 +168,7 @@ void main() {
     await CommentaryGenerator(
             db: db,
             llm: llm,
-            apiConfig: () =>
-                const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'),
+            modelStandard: () => 'qwen-plus',
             onProgress: (done, total) => progress.add(done))
         .generate(id);
     expect(progress, [1, 2]);

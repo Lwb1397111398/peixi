@@ -5,7 +5,6 @@ import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/llm/prompts.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 
@@ -17,14 +16,16 @@ class CommentaryGenerator {
   CommentaryGenerator({
     required this.db,
     required this.llm,
-    required this.apiConfig,
+    required this.modelStandard,
     this.onProgress,
     this.isCancelled,
   });
 
   final AppDatabase db;
   final LlmService llm;
-  final ApiConfig Function() apiConfig;
+
+  /// 深层分析槽位当前模型名（落库 commentaries.model；测试可注入固定值）
+  final String Function() modelStandard;
   final void Function(int done, int total)? onProgress;
 
   /// 返回 true 时抛 [PipelineCancelled] 中断循环（已完成场景已落库，可续跑）
@@ -72,7 +73,7 @@ class CommentaryGenerator {
                 sceneId: scene.id,
                 l1Subtext: '',
                 status: const Value('failed'),
-                model: apiConfig().modelStandard,
+                model: modelStandard(),
               ));
         }
       }
@@ -151,7 +152,7 @@ class CommentaryGenerator {
     final l1 = (result['l1_subtext'] ?? '').toString();
     final importance = (result['importance'] ?? 'normal').toString();
     final summary = (result['scene_summary'] ?? '').toString();
-    final model = apiConfig().modelStandard;
+    final model = modelStandard();
 
     await db.transaction(() async {
       // commentaries 覆盖写（含 failed 占位升级）
