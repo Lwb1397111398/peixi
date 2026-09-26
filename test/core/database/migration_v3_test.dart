@@ -44,7 +44,7 @@ void main() {
     // 2) 重新打开 → onUpgrade(2→3) 自动执行
     db = AppDatabase(NativeDatabase(dbFile));
 
-    expect(db.schemaVersion, 3);
+    expect(db.schemaVersion, 4);
     final rows = await db.select(db.knowledgeCards).get();
     expect(rows, hasLength(1));
     final card = rows.single;
