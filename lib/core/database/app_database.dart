@@ -175,7 +175,7 @@ class LlmCache extends Table {
   Set<Column> get primaryKey => {key};
 }
 
-/// LLM 渠道（OpenAI 兼容中转站）。api_key 存 secure storage（键 llm.channel.<id>.api_key）。
+/// LLM 渠道（OpenAI 兼容中转站）。api_key 存 secure storage（键 `llm.channel.<id>.api_key`）。
 class LlmChannels extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text()();

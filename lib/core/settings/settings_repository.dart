@@ -15,6 +15,8 @@ class SettingsRepository {
   static const _kModelCheap = 'llm.model_cheap';
   static const _kModelStandard = 'llm.model_standard';
   static const _kModelVision = 'llm.model_vision';
+  // 旧单配置已迁移为渠道的旗标（迁移幂等依据；不依赖"渠道表是否为空"）
+  static const _kChannelsMigrated = 'llm.channels_migrated';
   static const _kOssBucket = 'oss.bucket';
   static const _kOssEndpoint = 'oss.endpoint';
   // secure storage 键
@@ -188,17 +190,20 @@ class SettingsRepository {
   }
 
   Future<void> deleteChannel(int id) async {
-    await (_db.delete(_db.llmChannels)..where((t) => t.id.equals(id))).go();
-    await _secure.delete(key: _channelKey(id));
-    // 清掉指向该渠道的槽位绑定（槽位回落默认渠道）
-    for (final s in LlmSlot.values) {
-      final b = await loadSlot(s);
-      if (b?.channelId == id) {
-        await (_db.delete(_db.settings)
-              ..where((t) => t.key.equals('llm.slot.${s.name}')))
-            .go();
+    // 行删除与槽位绑定清理同事务，避免中途失败留下悬挂绑定
+    await _db.transaction(() async {
+      await (_db.delete(_db.llmChannels)..where((t) => t.id.equals(id))).go();
+      // 清掉指向该渠道的槽位绑定（槽位回落默认渠道）
+      for (final s in LlmSlot.values) {
+        final b = await loadSlot(s);
+        if (b?.channelId == id) {
+          await (_db.delete(_db.settings)
+                ..where((t) => t.key.equals('llm.slot.${s.name}')))
+              .go();
+        }
       }
-    }
+    });
+    await _secure.delete(key: _channelKey(id));
   }
 
   Future<void> saveSlot(LlmSlot slot,
@@ -241,7 +246,8 @@ class SettingsRepository {
   }
 
   Future<void> _migrateLegacyConfigIfNeeded() async {
-    if ((await loadChannels()).isNotEmpty) return;
+    // 幂等守卫用旗标：渠道表为空可能是用户删光了渠道，不能据此重跑迁移
+    if (await _get(_kChannelsMigrated) != null) return;
     final baseUrl = await _get(_kBaseUrl);
     final apiKey = await _secure.read(key: _sApiKey);
     if ((baseUrl == null || baseUrl.isEmpty) &&
@@ -262,6 +268,7 @@ class SettingsRepository {
         await saveSlot(slot, channelId: id, model: model);
       }
     }
+    await _set(_kChannelsMigrated, '1');
   }
 }
 

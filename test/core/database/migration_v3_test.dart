@@ -78,4 +78,27 @@ void main() {
 
     await db.close();
   });
+
+  test('v3 数据库升级到 v4 后 llm_channels 表存在且可写', () async {
+    final dbFile = File('${tmp.path}/db.sqlite');
+
+    // 1) 以 v4 结构创建，再手工回退成 v3 形态（删渠道表、回拨版本号）
+    var db = AppDatabase(NativeDatabase(dbFile));
+    await db.customStatement('DROP TABLE llm_channels');
+    await db.customStatement('PRAGMA user_version = 3');
+    await db.close();
+
+    // 2) 重新打开 → onUpgrade(3→4) 自动执行
+    db = AppDatabase(NativeDatabase(dbFile));
+
+    expect(db.schemaVersion, 4);
+    // 3) llm_channels 已由迁移创建，可正常写读
+    await db.into(db.llmChannels).insert(
+        LlmChannelsCompanion.insert(name: '中转站', baseUrl: 'https://x/v1'));
+    final row = await db.select(db.llmChannels).getSingle();
+    expect(row.name, '中转站');
+    expect(row.baseUrl, 'https://x/v1');
+
+    await db.close();
+  });
 }

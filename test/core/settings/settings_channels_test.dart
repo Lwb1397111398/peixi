@@ -57,6 +57,18 @@ void main() {
     // 第二次不再重复建渠道
     r = await repo.loadRouting();
     expect(r.channels.length, 1);
+    // 删光渠道后不得"复活"默认渠道（迁移幂等由旗标保证，而非"表是否为空"）
+    await repo.deleteChannel(r.channels.single.id);
+    r = await repo.loadRouting();
+    expect(r.channels, isEmpty);
+    expect(r.slots, isEmpty);
+  });
+
+  test('损坏的槽位串被丢弃：loadRouting 不抛异常也不含该槽位', () async {
+    await db.into(db.settings).insert(
+        SettingsCompanion.insert(key: 'llm.slot.analysis', value: 'abc:'));
+    final r = await repo.loadRouting();
+    expect(r.slots.containsKey(LlmSlot.analysis), isFalse);
   });
 
   test('从未配置过：loadRouting 返回空表不建渠道', () async {
