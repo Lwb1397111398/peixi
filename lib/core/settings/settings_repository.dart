@@ -41,6 +41,13 @@ class SettingsRepository {
   // 并发/频控：并发数默认 2（钳制 1~8），请求最小间隔默认 0ms（钳制 0~10000）
   static const _kLlmConcurrency = 'llm.concurrency';
   static const _kLlmMinInterval = 'llm.min_request_interval_ms';
+  // 小说两遍式管线参数（设计文档 §3）：批大小/首屏冲刺/地图领先/语义回忆开关
+  static const _kNovelMapBatch = 'novel.mapBatchChapters';
+  static const _kNovelDigestBatch = 'novel.digestBatchChapters';
+  static const _kNovelAnnotateBatch = 'novel.annotateBatchChapters';
+  static const _kNovelBurst = 'novel.initialBurstChapters';
+  static const _kNovelMapLead = 'novel.mapLeadChapters';
+  static const _kNovelVectorRecall = 'novel.vectorRecall';
   // 主题模式 'system' | 'light' | 'dark'（core 层不依赖 material，存原始串）
   static const _kThemeMode = 'app.theme_mode';
   // 桌面窗口边界 'left,top,width,height'
@@ -139,6 +146,38 @@ class SettingsRepository {
       {required int concurrency, required int minIntervalMs}) async {
     await _set(_kLlmConcurrency, concurrency.clamp(1, 8).toString());
     await _set(_kLlmMinInterval, minIntervalMs.clamp(0, 10000).toString());
+  }
+
+  /// 小说两遍式管线参数（设计文档 §3；mapLead 下限 1，为 0 会让地图/批注双泳道互等死锁）。
+  /// 读取侧与写入侧同样钳制，防外部/手改脏值直入调度器。
+  Future<NovelParams> loadNovelParams() async {
+    Future<int?> readInt(String key) async => int.tryParse(await _get(key) ?? '');
+    final mapBatch =
+        (await readInt(_kNovelMapBatch) ?? 5).clamp(1, 10);
+    final digestBatch =
+        (await readInt(_kNovelDigestBatch) ?? 10).clamp(1, 50);
+    final annotateBatch =
+        (await readInt(_kNovelAnnotateBatch) ?? 3).clamp(1, 10);
+    final burst = (await readInt(_kNovelBurst) ?? 10).clamp(1, 200);
+    final mapLead = (await readInt(_kNovelMapLead) ?? 20).clamp(1, 500);
+    final recall = await _get(_kNovelVectorRecall);
+    return NovelParams(
+        mapBatchChapters: mapBatch,
+        digestBatchChapters: digestBatch,
+        annotateBatchChapters: annotateBatch,
+        initialBurstChapters: burst,
+        mapLeadChapters: mapLead,
+        vectorRecall: recall == 'true');
+  }
+
+  Future<void> saveNovelParams(NovelParams p) async {
+    await _set(_kNovelMapBatch, p.mapBatchChapters.clamp(1, 10).toString());
+    await _set(_kNovelDigestBatch, p.digestBatchChapters.clamp(1, 50).toString());
+    await _set(
+        _kNovelAnnotateBatch, p.annotateBatchChapters.clamp(1, 10).toString());
+    await _set(_kNovelBurst, p.initialBurstChapters.clamp(1, 200).toString());
+    await _set(_kNovelMapLead, p.mapLeadChapters.clamp(1, 500).toString());
+    await _set(_kNovelVectorRecall, p.vectorRecall ? 'true' : 'false');
   }
 
   Future<String> loadThemeModeRaw() async => await _get(_kThemeMode) ?? 'light';
@@ -294,6 +333,24 @@ class SettingsRepository {
     }
     await _set(_kChannelsMigrated, '1');
   }
+}
+
+/// 小说两遍式管线参数（设计文档 §3；mapLead 下限 1，为 0 会让地图/批注双泳道互等死锁）。
+class NovelParams {
+  const NovelParams({
+    this.mapBatchChapters = 5,
+    this.digestBatchChapters = 10,
+    this.annotateBatchChapters = 3,
+    this.initialBurstChapters = 10,
+    this.mapLeadChapters = 20,
+    this.vectorRecall = false,
+  });
+  final int mapBatchChapters;
+  final int digestBatchChapters;
+  final int annotateBatchChapters;
+  final int initialBurstChapters;
+  final int mapLeadChapters;
+  final bool vectorRecall;
 }
 
 /// 窗口边界（桌面端尺寸/位置记忆）。
