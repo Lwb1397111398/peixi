@@ -233,11 +233,16 @@ void main() {
       expect(chs.single.mapDone, isFalse);
     });
 
-    test('返回值 = 新完成章数：模型漏章不计，下轮从洞口补齐', () async {
+    test('返回值 = 新完成章数：模型漏章不计，洞口续批不重复落库', () async {
       final id = await seedBook(3);
       final adapter = ScriptedAdapter([
-        '{"chapters":[{"idx":0,"summary":"s0"},{"idx":2,"summary":"s2"}]}',
-        '{"chapters":[{"idx":1,"summary":"s1"}]}',
+        '{"chapters":[{"idx":0,"summary":"s0","cast":["林川"],'
+            '"events":[{"name":"林川","event":"零章事件"}]},'
+            '{"idx":2,"summary":"s2","events":[{"name":"林川","event":"二章事件"}]}]}',
+        // 洞口续批：脚本刻意重复包含已完成章（第 2 章）的 events/summary——
+        // 修复前会重复插 events 并虚计 done，现在应整体跳过该章
+        '{"chapters":[{"idx":1,"summary":"s1"},'
+            '{"idx":2,"summary":"s2重写","events":[{"name":"林川","event":"二章事件"}]}]}',
       ]);
       final pass = NovelMapPass(db: db, llm: llm(adapter), batchChapters: 5);
       expect(await pass.step(id), 2); // 漏掉第 1 章
@@ -246,14 +251,100 @@ void main() {
       expect(chs[1].mapDone, isFalse);
       expect(chs[1].summary, isNull);
       expect(chs[2].mapDone, isTrue);
-      // 下轮批 = 首个未完成章（第 1 章）起连续批（第 2 章重复送审无副作用）
-      expect(await pass.step(id), 1);
+      // 下轮批 = 首个未完成章（第 1 章）起连续批（第 2 章重复送审是设计意图）
+      expect(await pass.step(id), 1); // done 只计新完成章
       expect(promptOf(adapter, 1), contains('[章1'));
       expect(promptOf(adapter, 1), contains('[章2'));
       chs = await chaptersOf(id);
       expect(chs.map((c) => c.mapDone), everyElement(isTrue));
       expect(chs[2].summary, 's2'); // 已完成章未被重写
+      // events 表无重复行：洞口续批不把已完成章的 events 再插一份
+      final events = await (db.select(db.characterEvents)
+            ..where((t) => t.projectId.equals(id)))
+          .get();
+      expect(events.where((e) => e.chapterIdx == 0), hasLength(1));
+      expect(events.where((e) => e.chapterIdx == 2), hasLength(1));
+      // 洞补上后 step 归零推进
       expect(await pass.step(id), 0);
+      expect(adapter.requests, hasLength(2));
+    });
+
+    test('事件先删后插：同章重写不重复落事件（幂等兜底）', () async {
+      final id = await seedBook(1);
+      final linId = await db.into(db.characters).insert(
+          CharactersCompanion.insert(projectId: id, name: '林川'));
+      // 脏状态：章 0 未完成地图却已有同章事件（模拟历史/中断残留）
+      await db.into(db.characterEvents).insert(
+          CharacterEventsCompanion.insert(
+              projectId: id, characterId: linId,
+              chapterIdx: 0, event: '旧事件'));
+      final adapter = ScriptedAdapter([
+        '{"chapters":[{"idx":0,"summary":"s0",'
+            '"events":[{"name":"林川","event":"新事件"}]}]}',
+      ]);
+      await NovelMapPass(db: db, llm: llm(adapter), batchChapters: 1).step(id);
+      final events = await (db.select(db.characterEvents)
+            ..where((t) => t.projectId.equals(id)))
+          .get();
+      expect(events, hasLength(1));
+      expect(events.single.event, '新事件');
+    });
+
+    test('毒响应降批：chapters 非数组转 LlmJsonException 走减半', () async {
+      final id = await seedBook(2);
+      final adapter = ScriptedAdapter([
+        '{"chapters":"oops"}', // 合法 JSON 但形状错误（已入缓存），须走降批换新键重试
+        '{"chapters":[{"idx":0,"summary":"补零"}]}',
+        '{"chapters":[{"idx":1,"summary":"补一"}]}',
+      ]);
+      final degraded = <String>[];
+      final n = await NovelMapPass(db: db, llm: llm(adapter), batchChapters: 2,
+              onDegraded: (d) => degraded.add(d))
+          .step(id);
+      expect(n, 2); // 不冒 TypeError，降批后两章均完成
+      expect(degraded, hasLength(1));
+      final chs = await chaptersOf(id);
+      expect(chs.map((c) => c.mapDone), everyElement(isTrue));
+      expect(adapter.requests, hasLength(3)); // 毒响应 + 两个单章批（均未命中缓存）
+    });
+
+    test('毒响应跳过：元素非 Map 就地跳过不冒 TypeError', () async {
+      final id = await seedBook(2);
+      final adapter = ScriptedAdapter(['{"chapters":["not-a-map", 42]}']);
+      final n = await NovelMapPass(db: db, llm: llm(adapter), batchChapters: 2)
+          .step(id);
+      expect(n, 0); // 无有效条目 → 视为漏章，零落库不崩溃
+      final chs = await chaptersOf(id);
+      expect(chs.map((c) => c.mapDone), everyElement(isFalse));
+      expect(
+          await (db.select(db.characterEvents)
+                ..where((t) => t.projectId.equals(id)))
+              .get(),
+          isEmpty);
+      expect(
+          await (db.select(db.characters)
+                ..where((t) => t.projectId.equals(id)))
+              .get(),
+          isEmpty);
+    });
+
+    test('UTF-16 截断不劈代理对：emoji 完整性', () async {
+      // 'a'*5999 + 😀（2 码元）+ 后文：默认 6000 截断点恰落在 emoji 高低代理之间
+      final id = await NovelImporter(db: db).import(
+          title: '书',
+          sourcePath: '/book.txt',
+          doc: NovelDoc(chapters: [
+            NovelChapter(
+                idx: 0, title: '第1章', paragraphs: ['a' * 5999 + '😀' + '后文']),
+          ]));
+      final adapter = ScriptedAdapter(['{"chapters":[{"idx":0,"summary":"s0"}]}']);
+      await NovelMapPass(db: db, llm: llm(adapter), batchChapters: 1).step(id);
+      final prompt = promptOf(adapter);
+      final marker = prompt.indexOf('……（本章其余内容截断');
+      expect(marker, greaterThan(0));
+      // 截断文本末码元是 'a'（0x61），而非被劈开的 emoji 高代理（0xD83D）；
+      // marker-1 是换行符
+      expect(prompt.codeUnitAt(marker - 2), 0x61);
     });
 
     test('取消：step 抛 PipelineCancelled 且零调用', () async {

@@ -216,6 +216,74 @@ void main() {
       expect(chs.map((c) => c.digestBefore), everyElement('（故事刚开始）'));
     });
 
+    test('回填老项目：快照从首个未批注且无快照章续起，旧章不被触碰', () async {
+      final id = await seedMappedBook(10);
+      final chs = await chaptersOf(id);
+      // 回填产物形态：章 0-4 annotDone=1 而 digestBefore=null；章 5 挂旧断点快照
+      for (final ch in chs.take(5)) {
+        await (db.update(db.chapters)..where((t) => t.id.equals(ch.id)))
+            .write(const ChaptersCompanion(annotDone: Value(true)));
+      }
+      await (db.update(db.chapters)..where((t) => t.id.equals(chs[5].id)))
+          .write(const ChaptersCompanion(digestBefore: Value('旧断点快照')));
+      // meta.digest 预置旧摘要（回填保留）
+      final p =
+          await (db.select(db.projects)..where((t) => t.id.equals(id))).getSingle();
+      final meta = NovelMeta.fromJson(p.metaJson)..digest = '旧摘要';
+      await (db.update(db.projects)..where((t) => t.id.equals(id)))
+          .write(ProjectsCompanion(metaJson: Value(meta.encode())));
+
+      final adapter = ScriptedAdapter(['{"digest":"新摘要"}']);
+      final n = await NovelDigestPass(db: db, llm: llm(adapter)).step(id);
+      expect(n, 4); // 批 = 第 6-9 章（首个未批注且无快照章起），不从第 0 章重启
+      final prompt = promptOf(adapter);
+      expect(prompt, contains('[旧摘要]旧摘要')); // 快照链自旧摘要续起，无双计
+      expect(prompt, contains('- 第6章'));
+      expect(prompt, isNot(contains('- 第5章')));
+      expect(prompt, isNot(contains('- 第0章')));
+      final after = await chaptersOf(id);
+      for (final ch in after.take(5)) {
+        expect(ch.digestBefore, isNull); // 旧章不被触碰（无剧透快照写入）
+        expect(ch.annotDone, isTrue);
+      }
+      expect(after[5].digestBefore, '旧断点快照');
+      for (final ch in after.skip(6)) {
+        expect(ch.digestBefore, '旧摘要');
+      }
+      expect((await metaOf(id)).digest, '新摘要'); // meta.digest 滚动推进而非重置
+    });
+
+    test('预算异常透传：LlmBudgetException 不被拼接兜底吞掉', () async {
+      final id = await seedMappedBook(4);
+      await db.into(db.settings).insert(SettingsCompanion.insert(
+          key: 'llm.monthly_budget_tokens', value: '100'));
+      await db.into(db.llmLogs).insert(LlmLogsCompanion.insert(
+          purpose: '预热', model: 'flash', promptTokens: const Value(100)));
+      final adapter = ScriptedAdapter(['{"digest":"不应被调用"}']);
+      await expectLater(NovelDigestPass(db: db, llm: llm(adapter)).step(id),
+          throwsA(isA<LlmBudgetException>()));
+      expect(adapter.requests, isEmpty); // 预算闸门在 HTTP 之前拦截
+      // 兜底拼接不得落库：快照与 meta.digest 均保持原状
+      final chs = await chaptersOf(id);
+      expect(chs.map((c) => c.digestBefore), everyElement(isNull));
+      expect((await metaOf(id)).digest, isNull);
+    });
+
+    test('UTF-16 尾部截断不劈代理对：emoji 完整保留', () async {
+      final id = await seedMappedBook(1);
+      // oldDigest = 😀 + 'z'*393 → merged 长 401，start=1 恰落在 emoji 低代理上
+      final p =
+          await (db.select(db.projects)..where((t) => t.id.equals(id))).getSingle();
+      final meta = NovelMeta.fromJson(p.metaJson)..digest = '😀${'z' * 393}';
+      await (db.update(db.projects)..where((t) => t.id.equals(id)))
+          .write(ProjectsCompanion(metaJson: Value(meta.encode())));
+      final adapter = ScriptedAdapter(['不是json', '修复后仍不是json']); // 走拼接兜底
+      await NovelDigestPass(db: db, llm: llm(adapter)).step(id);
+      final digest = (await metaOf(id)).digest!;
+      expect(digest.startsWith('😀'), isTrue); // emoji 成对保留，而非只剩低代理
+      expect(digest.runes.length, 400);
+    });
+
     test('取消：step 抛 PipelineCancelled 且零调用', () async {
       final id = await seedMappedBook(4);
       final adapter = ScriptedAdapter([]);

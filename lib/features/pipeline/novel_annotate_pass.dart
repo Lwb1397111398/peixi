@@ -56,33 +56,37 @@ class NovelAnnotatePass {
 
   /// 单章重批（处理页按钮；调用方须保证调度器空闲）。
   Future<void> reannotateChapter(int projectId, int chapterIdx) async {
+    if (isCancelled?.call() ?? false) throw const PipelineCancelled();
     final chapters = await _chapters(projectId);
     final idx = chapters.indexWhere((c) => c.idx == chapterIdx);
     if (idx < 0) throw PipelineException('章不存在: $chapterIdx');
     final ch = chapters[idx];
-    if (!ch.mapDone || ch.digestBefore == null) {
-      throw PipelineException('该章的地图或摘要尚未就绪');
-    }
-    await _processBatch(projectId, [ch], chapters.length);
+    if (!ch.mapDone) throw PipelineException('该章的地图尚未就绪');
+    // digest_before 为空（老项目回填旧章）不阻断重批：prompt 省略[故事至今]节
+    await _processBatch(projectId, [ch], chapters.length, skipAnnotated: false);
   }
 
   Future<int> _processBatch(
-      int projectId, List<Chapter> batch, int total) async {
+      int projectId, List<Chapter> batch, int total,
+      {bool skipAnnotated = true}) async {
     if (isCancelled?.call() ?? false) throw const PipelineCancelled();
     final prompt = await _buildPrompt(projectId, batch);
     try {
       final result = await _llm.chatJson([
         {'role': 'user', 'content': prompt},
       ], slot: LlmSlot.analysis, purpose: 'novel_annotate', projectId: projectId);
-      final done = await _apply(projectId, batch, result);
+      final done = await _apply(projectId, batch, result,
+          skipAnnotated: skipAnnotated);
       onProgress?.call(await _doneCount(projectId), total);
       return done;
     } on LlmJsonException {
       if (batch.length == 1) rethrow;
       final mid = batch.length ~/ 2;
       onDegraded?.call('批注批解析失败，降批：${batch.length} → $mid + ${batch.length - mid}');
-      return await _processBatch(projectId, batch.sublist(0, mid), total) +
-          await _processBatch(projectId, batch.sublist(mid), total);
+      return await _processBatch(projectId, batch.sublist(0, mid), total,
+              skipAnnotated: skipAnnotated) +
+          await _processBatch(projectId, batch.sublist(mid), total,
+              skipAnnotated: skipAnnotated);
     }
   }
 
@@ -96,7 +100,10 @@ class NovelAnnotatePass {
       if (p.chapterId == null) continue;
       (byChapter[p.chapterId!] ??= []).add(p);
     }
-    final digest = batch.first.digestBefore!;
+    // 近似取舍：整批统一用批首章的 digest_before——跨快照批边界时后段章拿到
+    // 更旧的快照（偏保守、无剧透），逐章精确快照需拆批调用，不值得。
+    // 老项目回填旧章可为 null：[故事至今] 节整体省略（下方剥除），其余层照常。
+    final digest = batch.first.digestBefore;
     final castIds = <int>{
       for (final ch in batch)
         ...((jsonDecode(ch.castIds) as List? ?? []).cast<int>()),
@@ -104,7 +111,7 @@ class NovelAnnotatePass {
     final cast = await _castSection(projectId,
         beforeIdx: batch.first.idx, ids: castIds);
     final recallText = await recall?.recallContext(projectId,
-            beforeChapterIdx: batch.first.idx, query: digest) ??
+            beforeChapterIdx: batch.first.idx, query: digest ?? '') ??
         '';
     final prev = await (_db.select(_db.chapters)
           ..where((t) => t.projectId.equals(projectId) &
@@ -116,19 +123,26 @@ class NovelAnnotatePass {
       for (final c in prev)
         if ((c.summary ?? '').isNotEmpty) '第${c.idx}章：${c.summary}',
     ].join('\n');
+    // 无正文段落的章（如卷标题紧邻章标题切出的空章）不进正文块：无可锚定段落
     final blocks = [
       for (final ch in batch)
-        '[第${ch.idx}章 ${ch.title ?? ''}]\n'
-            '${(byChapter[ch.id] ?? const []).map((p) => '[${p.idx}] ${p.content}').join('\n')}',
+        if ((byChapter[ch.id] ?? const <Paragraph>[]).isNotEmpty)
+          '[第${ch.idx}章 ${ch.title ?? ''}]\n'
+              '${(byChapter[ch.id] ?? const []).map((p) => '[${p.idx}] ${p.content}').join('\n')}',
     ];
-    return Prompts.novelAnnotateV2(
-        digest: digest,
+    var prompt = Prompts.novelAnnotateV2(
+        digest: digest ?? '',
         cast: cast,
         recall: recallText,
         recentSummaries: recent,
         chaptersText: blocks.join('\n\n'),
         chapterStart: batch.first.idx,
         chapterEnd: batch.last.idx);
+    if (digest == null || digest.isEmpty) {
+      // 模板对 digest 是必填 String：按空串渲染后剥除空的 [故事至今] 节行
+      prompt = prompt.replaceFirst('[故事至今]\n', '');
+    }
+    return prompt;
   }
 
   /// [出场人物]：cast 并集 → 人设 + 批前事件线（每人物最近 3 条，时间正序），
@@ -139,12 +153,17 @@ class NovelAnnotatePass {
     final rows = await (_db.select(_db.characters)
           ..where((t) => t.projectId.equals(projectId) & t.id.isIn(ids.toList())))
         .get()
-      ..sort((a, b) => (b.major ? 1 : 0).compareTo(a.major ? 1 : 0));
+      ..sort((a, b) {
+        final byMajor = (b.major ? 1 : 0).compareTo(a.major ? 1 : 0);
+        // id 次级排序键：List.sort 不稳定，同 major 时保证确定序（缓存键/降批重放一致）
+        return byMajor != 0 ? byMajor : a.id.compareTo(b.id);
+      });
     final events = await (_db.select(_db.characterEvents)
           ..where((t) => t.projectId.equals(projectId) &
               t.characterId.isIn(ids.toList()) &
               t.chapterIdx.isSmallerThanValue(beforeIdx))
-          ..orderBy([(e) => OrderingTerm.desc(e.chapterIdx)]))
+          ..orderBy([(e) => OrderingTerm.desc(e.chapterIdx),
+              (e) => OrderingTerm.asc(e.id)])) // 同章多条按 id 稳定次序
         .get();
     final byChar = <int, List<CharacterEvent>>{};
     for (final e in events) {
@@ -165,11 +184,9 @@ class NovelAnnotatePass {
   }
 
   Future<int> _apply(int projectId, List<Chapter> batch,
-      Map<String, dynamic> result) async {
-    final entries = <int, Map>{
-      for (final e in (result['chapters'] as List? ?? []).cast<Map>())
-        if (e['idx'] is num) (e['idx'] as num).toInt(): e,
-    };
+      Map<String, dynamic> result,
+      {bool skipAnnotated = true}) async {
+    final entries = _parseResult(result); // 解析先行：失败走降批，不产生半途写库
     final paras = await (_db.select(_db.paragraphs)
           ..where((t) => t.chapterId.isIn([for (final c in batch) c.id])))
         .get();
@@ -181,14 +198,24 @@ class NovelAnnotatePass {
     var done = 0;
     await _db.transaction(() async {
       for (final ch in batch) {
-        final e = entries[ch.idx];
-        if (e == null) continue; // 模型漏章：不置 annot_done，下轮重试
+        // 洞口续批包含已完成章（重试漏章的设计意图）：跳过不重写、done 不重复计数
+        if (skipAnnotated && ch.annotDone) continue;
         final chapterParas = byChapter[ch.id] ?? const <Paragraph>[];
-        if (chapterParas.isEmpty) continue;
+        if (chapterParas.isEmpty) {
+          // 空章（卷标题紧邻章标题、行首章标题等切出的无正文章）：无可批注对象
+          // 即视为完成——否则永远卡住批首，后续章被反复删除重写。宁缺毋滥不受影响。
+          await (_db.update(_db.chapters)..where((t) => t.id.equals(ch.id)))
+              .write(const ChaptersCompanion(annotDone: Value(true)));
+          done++;
+          continue;
+        }
+        final annotations = entries[ch.idx];
+        if (annotations == null) continue; // 模型漏章：不置 annot_done，下轮重试
         final paraByIdx = {for (final p in chapterParas) p.idx: p};
         final inserts = <(Paragraph, String, Map<String, dynamic>)>[];
-        for (final a in (e['annotations'] as List? ?? []).cast<Map>()) {
-          final idx = (a['para_idx'] as num?)?.toInt();
+        for (final a in annotations) {
+          final idx =
+              a['para_idx'] is num ? (a['para_idx'] as num).toInt() : null;
           final type = (a['type'] ?? '').toString().trim();
           final para = idx == null ? null : paraByIdx[idx];
           if (para == null) continue;
@@ -265,12 +292,39 @@ Map<String, dynamic>? normalizeAnnotationContent(String type, dynamic content) {
     case 'L4':
       if (content is! Map) return null;
       final question = (content['question'] ?? '').toString().trim();
+      // 非 List（如模型给了字符串）中性化为空列表，不抛 TypeError
+      final raw = content['perspectives'];
       final perspectives = [
-        for (final p in (content['perspectives'] as List? ?? [])) p.toString(),
+        if (raw is List) for (final p in raw) p.toString(),
       ];
       if (question.isEmpty) return null;
       return {'question': question, 'perspectives': perspectives};
     default:
       return null;
+  }
+}
+
+/// 解析模型响应 → {章 idx: 批注条目}。只包解析、不包落库（落库 bug 不得被伪装成
+/// 模型错误）：顶层 chapters 非数组等形状错误转 LlmJsonException 走既有降批路径；
+/// 元素非 Map / annotations 非 List 就地跳过。catch 兜住 TypeError——惰性 cast
+/// 绕过 on LlmJsonException 直冒 step、而毒响应已入缓存会导致重试永久失败。
+Map<int, List<Map>> _parseResult(Map<String, dynamic> result) {
+  try {
+    final raw = result['chapters'];
+    if (raw == null) return const <int, List<Map>>{};
+    if (raw is! List) {
+      throw LlmJsonException('批注响应 chapters 不是数组（${raw.runtimeType}）');
+    }
+    final entries = <int, List<Map>>{};
+    for (final e in raw.whereType<Map>()) {
+      if (e['idx'] is! num) continue;
+      final anns = e['annotations'];
+      entries[(e['idx'] as num).toInt()] = [
+        if (anns is List) ...anns.whereType<Map>(),
+      ];
+    }
+    return entries;
+  } on TypeError catch (e) {
+    throw LlmJsonException('批注响应结构异常: $e');
   }
 }

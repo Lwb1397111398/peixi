@@ -41,7 +41,12 @@ class NovelDigestPass {
           ..where((t) => t.projectId.equals(projectId))
           ..orderBy([(c) => OrderingTerm.asc(c.idx)]))
         .get();
-    final first = chapters.indexWhere((c) => c.digestBefore == null);
+    // 选批条件带 !annotDone：老项目回填态（0..k-1 章 annotDone=1 而 digest_before
+    // 为 null，旧断点快照挂在第 k 章）不得从第 0 章重启快照链——否则「已含
+    // 0..k 内容的 oldDigest」会与章摘要双计，且把含后文剧情的快照写进前段章
+    // digest_before（reannotate 剧透）。新项目零影响：被批注章必有快照。
+    final first =
+        chapters.indexWhere((c) => c.digestBefore == null && !c.annotDone);
     if (first < 0) return 0;
     final limit = math.min(first + batchChapters, chapters.length);
     final batch = <Chapter>[];
@@ -94,6 +99,10 @@ class NovelDigestPass {
       return d.isEmpty ? _fallback(oldDigest, batch) : d;
     } on LlmJsonException {
       return _degraded(oldDigest, batch);
+    } on LlmBudgetException {
+      // 预算用尽须原样落阶段失败（§8：用户可读懂的失败提示），
+      // 不得被拼接兜底静默吞掉——否则全书 digest 用垃圾拼接落库且管线不报错
+      rethrow;
     } on LlmException {
       return _degraded(oldDigest, batch);
     }
@@ -108,6 +117,11 @@ class NovelDigestPass {
   String _fallback(String oldDigest, List<Chapter> batch) {
     final merged =
         '$oldDigest\n${batch.map((c) => c.summary).join('\n')}'.trim();
-    return merged.length > 400 ? merged.substring(merged.length - 400) : merged;
+    if (merged.length <= 400) return merged;
+    // 保留末尾 400 字；UTF-16 截断点落在代理对中间时回退 1 个码元（不劈 emoji）
+    var start = merged.length - 400;
+    final u = merged.codeUnitAt(start);
+    if (u >= 0xDC00 && u <= 0xDFFF) start--;
+    return merged.substring(start);
   }
 }

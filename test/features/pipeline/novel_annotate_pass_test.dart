@@ -168,6 +168,64 @@ void main() {
       expect(logs.map((l) => l.purpose), everyElement('novel_annotate'));
     });
 
+    test('空章直接完成：不卡批首、零送审对象、后续章只批注一次', () async {
+      // 卷标题紧邻章标题、行首章标题会切出无正文空章（novel_parser 真实形态）
+      final id = await NovelImporter(db: db).import(
+          title: '书',
+          sourcePath: '/book.txt',
+          doc: NovelDoc(chapters: [
+            const NovelChapter(idx: 0, title: '第一卷', paragraphs: []),
+            NovelChapter(idx: 1, title: '第1章',
+                paragraphs: ['第一章段落甲。', '第一章段落乙。']),
+          ]));
+      final chs = await chaptersOf(id);
+      for (final ch in chs) {
+        await markReady(ch);
+      }
+      final adapter = ScriptedAdapter([
+        '{"chapters":[{"idx":1,"annotations":[{"para_idx":0,"type":"L1","content":"一章批注"}]}]}',
+      ]);
+      final pass = NovelAnnotatePass(db: db, llm: llm(adapter), batchChapters: 3);
+      expect(await pass.step(id), 2); // 空章 + 章 1 都计为新完成
+      final after = await chaptersOf(id);
+      expect(after[0].annotDone, isTrue); // 空章被置完成
+      expect(after[1].annotDone, isTrue);
+      // 空章正文块不进 prompt（无可锚定段落，零送审对象）
+      expect(promptOf(adapter), isNot(contains('[第0章')));
+      // 全书完成：step 归零且不再发起任何调用（不再死循环）
+      expect(await pass.step(id), 0);
+      expect(adapter.requests, hasLength(1));
+      // 后续正常章只被批注一次（空章在前，章 1 段落全局 idx = 0/1）
+      final paras = await parasByGlobalIdx(id);
+      final para0 = await annsOfPara(paras[0]!.id);
+      expect(para0.single.type, 'L1');
+      expect(jsonDecode(para0.single.contentJson), {'text': '一章批注'});
+    });
+
+    test('洞口续批：已批注章不重写不重复计数', () async {
+      final id = await seedBook(3);
+      final chs = await chaptersOf(id);
+      for (final ch in chs) {
+        await markReady(ch);
+      }
+      final adapter = ScriptedAdapter([
+        '{"chapters":[{"idx":0,"annotations":[{"para_idx":0,"type":"L1","content":"零章"}]},'
+            '{"idx":2,"annotations":[{"para_idx":4,"type":"L1","content":"二章"}]}]}',
+        '{"chapters":[{"idx":1,"annotations":[{"para_idx":2,"type":"L1","content":"一章新批注"}]}]}',
+      ]);
+      final pass = NovelAnnotatePass(db: db, llm: llm(adapter), batchChapters: 3);
+      expect(await pass.step(id), 2); // 章 0、2 完成，章 1 成洞
+      final paras = await parasByGlobalIdx(id);
+      final para4Id = (await annsOfPara(paras[4]!.id)).single.id;
+      // 第二轮批 = [1,2]：章 2 已完成 → 只处理章 1，done 只计新章
+      expect(await pass.step(id), 1);
+      expect(promptOf(adapter, 1), contains('[本章正文（第1~2章'));
+      final para4After = await annsOfPara(paras[4]!.id);
+      expect(para4After.single.id, para4Id); // 章 2 批注行未被删除重写
+      expect(jsonDecode(para4After.single.contentJson), {'text': '二章'});
+      expect(await pass.step(id), 0);
+    });
+
     test('落库：L1-L4 归一、越界/未知/空丢弃、知识卡去重、幂等重批', () async {
       final id = await seedBook(3);
       final chs = await chaptersOf(id);
@@ -359,13 +417,81 @@ void main() {
       expect(jsonDecode(para4.single.contentJson), {'text': '二章首批'});
     });
 
-    test('reannotateChapter：章不存在或未就绪 → PipelineException', () async {
+    test('毒响应降批：chapters 非数组转 LlmJsonException 走减半', () async {
+      final id = await seedBook(2);
+      final chs = await chaptersOf(id);
+      for (final ch in chs) {
+        await markReady(ch);
+      }
+      final adapter = ScriptedAdapter([
+        '{"chapters":"oops"}', // 合法 JSON 但形状错误（已入缓存），须走降批换新键重试
+        '{"chapters":[{"idx":0,"annotations":[{"para_idx":0,"type":"L1","content":"单章成"}]}]}',
+        '{"chapters":[{"idx":1,"annotations":[{"para_idx":2,"type":"L1","content":"一章成"}]}]}',
+      ]);
+      final degraded = <String>[];
+      final n = await NovelAnnotatePass(db: db, llm: llm(adapter),
+              batchChapters: 2, onDegraded: (d) => degraded.add(d))
+          .step(id);
+      expect(n, 2); // 不冒 TypeError，降批后两章均完成
+      expect(degraded, hasLength(1));
+      expect(adapter.requests, hasLength(3)); // 毒响应 + 两个单章批（均未命中缓存）
+      final after = await chaptersOf(id);
+      expect(after.map((c) => c.annotDone), everyElement(isTrue));
+    });
+
+    test('毒响应容错：annotations 元素非 Map 跳过、坏 para_idx 丢弃、perspectives 中性化', () async {
+      final id = await seedBook(1);
+      final chs = await chaptersOf(id);
+      await markReady(chs.single);
+      final adapter = ScriptedAdapter([
+        '{"chapters":[{"idx":0,"annotations":["not-a-map",'
+            '{"para_idx":"0","type":"L1","content":"坏 para_idx 丢弃"},'
+            '{"para_idx":0,"type":"L4","content":{"question":"你会怎么选？","perspectives":"临场发挥"}}]}]}',
+      ]);
+      final pass = NovelAnnotatePass(db: db, llm: llm(adapter), batchChapters: 1);
+      expect(await pass.step(id), 1); // 不冒 TypeError
+      final paras = await parasByGlobalIdx(id);
+      final para0 = await annsOfPara(paras[0]!.id);
+      expect(para0, hasLength(1)); // 字符串元素 + 字符串 para_idx 均被跳过
+      expect(para0.single.type, 'L4');
+      expect(jsonDecode(para0.single.contentJson),
+          {'question': '你会怎么选？', 'perspectives': []}); // 非 List 中性化为空列表
+    });
+
+    test('reannotateChapter 老项目旧章：无快照不抛，prompt 省略[故事至今]', () async {
+      final id = await seedBook(2);
+      final chs = await chaptersOf(id);
+      // 回填形态：地图完成、annotDone=1，但 digest_before 为 null
+      for (final ch in chs) {
+        await (db.update(db.chapters)..where((t) => t.id.equals(ch.id))).write(
+            ChaptersCompanion(
+                mapDone: const Value(true),
+                summary: Value('第${ch.idx}章摘要'),
+                annotDone: const Value(true)));
+      }
+      final adapter = ScriptedAdapter([
+        '{"chapters":[{"idx":0,"annotations":[{"para_idx":0,"type":"L1","content":"老章重批"}]}]}',
+      ]);
+      await NovelAnnotatePass(db: db, llm: llm(adapter))
+          .reannotateChapter(id, 0);
+      expect(adapter.requests, hasLength(1));
+      final prompt = promptOf(adapter);
+      expect(prompt, isNot(contains('[故事至今]'))); // 节整体省略，不抛"未就绪"
+      expect(prompt, contains('[出场人物]'));
+      expect(prompt, contains('[前文摘要]（本章即故事开头）'));
+      expect(prompt, contains('[本章正文（第0~0章'));
+      final paras = await parasByGlobalIdx(id);
+      final para0 = await annsOfPara(paras[0]!.id);
+      expect(jsonDecode(para0.single.contentJson), {'text': '老章重批'});
+    });
+
+    test('reannotateChapter：章不存在或地图未就绪 → PipelineException', () async {
       final id = await seedBook(2);
       final pass = NovelAnnotatePass(db: db, llm: llm(ScriptedAdapter([])));
       await expectLater(pass.reannotateChapter(id, 99),
           throwsA(isA<PipelineException>()));
       await expectLater(pass.reannotateChapter(id, 0),
-          throwsA(isA<PipelineException>())); // 地图未就绪
+          throwsA(isA<PipelineException>())); // 地图未就绪（无快照不再抛）
     });
 
     test('取消：step 抛 PipelineCancelled 且零调用', () async {
