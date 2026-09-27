@@ -10,6 +10,7 @@ import 'package:peixi/core/media/drop_classifier.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/backup/project_package.dart';
 import 'package:peixi/features/calibration/calibration_page.dart';
+import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
@@ -411,7 +412,40 @@ class _ProjectCard extends ConsumerWidget {
                 ],
               ),
               const Spacer(),
-              if (state?.busy == true) ...[
+              if (isNovel && status != ProjectStatus.failed) ...[
+                // 两遍式管线（§6.3）：导入即可读——处理中保留进度行，
+                // 阅读入口与批注徽章常驻（批注随到随显）
+                if (state?.busy == true) ...[
+                  Row(children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: state?.progress,
+                          minHeight: 5,
+                        ),
+                      ),
+                    ),
+                    _cancelTap(context, ref),
+                  ]),
+                  const SizedBox(height: Space.xs),
+                ],
+                Row(children: [
+                  if (_annBadgeText != null) ...[
+                    AppBadge(_annBadgeText!, tone: BadgeTone.info),
+                    const SizedBox(width: Space.s),
+                  ],
+                  Expanded(
+                    child: Text(
+                      statusLabel(status, isNovel: true),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  _readEntry(context, ref),
+                ]),
+              ] else if (state?.busy == true) ...[
                 Row(children: [
                   Expanded(
                     child: ClipRRect(
@@ -476,6 +510,35 @@ class _ProjectCard extends ConsumerWidget {
     return ep == null ? null : ' · 第$ep集';
   }
 
+  /// 批注徽章文案（v5 meta 计数，调度器 denormalized；chapterCount 未回填不显示）
+  String? get _annBadgeText {
+    if (project.type != 'novel') return null;
+    final meta = NovelMeta.fromJson(project.metaJson);
+    if (meta.chapterCount <= 0) return null;
+    return '批注 ${meta.annotatedChapters}/${meta.chapterCount} 章';
+  }
+
+  /// 「开始阅读」常驻入口（§6.3 导入即可读）：与卡片 onTap 走同一闸门
+  Widget _readEntry(BuildContext context, WidgetRef ref) {
+    final cs = Theme.of(context).colorScheme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _open(context, ref),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: Space.xs, vertical: Space.xs),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text('开始阅读',
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: cs.primary)),
+          Icon(Icons.chevron_right, size: 14, color: cs.primary),
+        ]),
+      ),
+    );
+  }
+
   /// 卡片右上角紧凑取消入口（与进度条同排，避免撑破卡片高度）
   Widget _cancelTap(BuildContext context, WidgetRef ref) {
     return Tooltip(
@@ -516,17 +579,8 @@ class _ProjectCard extends ConsumerWidget {
       return;
     }
     if (!context.mounted) return;
-    if (status == ProjectStatus.ready) {
-      // 小说进阅读器，视频进播放器（N4/设计稿 8.4）
-      final page = project.type == 'novel'
-          ? ReaderPage(projectId: project.id)
-          : PlayerPage(projectId: project.id);
-      await Navigator.push(
-          context, MaterialPageRoute(builder: (_) => page));
-      return;
-    }
-    await Navigator.push(context,
-        MaterialPageRoute(builder: (_) => ProcessingPage(projectId: project.id)));
+    await Navigator.push(
+        context, MaterialPageRoute(builder: (_) => libraryEntryGate(project, status)));
   }
 
   void _showActions(BuildContext context, WidgetRef ref) {
@@ -613,6 +667,19 @@ class _ProjectCard extends ConsumerWidget {
   }
 }
 
+/// 卡片入口闸门（设计文档 §6.3/§9）：小说非 failed 导入即可读（两遍式批注
+/// 随到随显，不阻塞等 ready）；视频 READY 才进播放器；其余一律进处理页。
+/// 待校准/媒体缺失两个前置分支在 [_ProjectCard._open] 里先行处理。
+Widget libraryEntryGate(Project project, ProjectStatus status) {
+  if (project.type == 'novel' && status != ProjectStatus.failed) {
+    return ReaderPage(projectId: project.id);
+  }
+  if (status == ProjectStatus.ready) {
+    return PlayerPage(projectId: project.id);
+  }
+  return ProcessingPage(projectId: project.id);
+}
+
 /// 状态徽章文案与语义色调（色值统一走 AppBadge/DESIGN.md token）
 (String, BadgeTone) statusBadge(
     ProjectStatus status, Project project, PipelineState? state) {
@@ -631,11 +698,13 @@ class _ProjectCard extends ConsumerWidget {
 }
 
 String statusLabel(ProjectStatus status, {bool isNovel = false}) => switch (status) {
-      ProjectStatus.imported => isNovel ? '已导入 · 提取人物中' : '已导入 · 准备处理',
+      ProjectStatus.imported =>
+        isNovel ? '处理中 · 可阅读' : '已导入 · 准备处理',
       ProjectStatus.audioReady => '音频已就绪',
       ProjectStatus.uploaded => '已上传 · 识别排队中',
       ProjectStatus.asrDone => '转录完成 · 角色映射中',
-      ProjectStatus.mapped => isNovel ? '人物提取完成 · 生成批注中' : '映射完成',
+      ProjectStatus.mapped =>
+        isNovel ? '地图完成 · 批注进行中 · 可阅读' : '映射完成',
       ProjectStatus.calibrated => '校准完成 · 切分场景中',
       ProjectStatus.segmented => '场景已切分 · 生成解说中',
       ProjectStatus.commentaryDone => isNovel ? '批注完成 · 收尾中' : '解说完成 · 收尾中',
@@ -648,7 +717,10 @@ String stageLabelOf(String? failedStage, {bool isNovel = false}) =>
         'audio' => '音频抽取',
         'upload' => '上传中转',
         'asr' => '语音识别',
-        'map' => isNovel ? '人物提取' : '角色映射',
+        // 两遍式管线新口径：map/digest/annotate（§8 错误表）
+        'map' => isNovel ? '地图' : '角色映射',
+        'digest' => '摘要快照',
+        'annotate' => '批注生成',
         'segment' => '场景切分',
         'commentary' => isNovel ? '批注生成' : '解说生成',
         'finalize' => '收尾',
