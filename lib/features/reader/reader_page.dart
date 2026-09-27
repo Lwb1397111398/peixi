@@ -47,6 +47,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   final _l4Controllers = <int, TextEditingController>{};
   final _l4Answered = <int, String?>{}; // null=未作答，''=跳过
 
+  // 批注随到随显（设计文档 §9）：管线事件防抖重载当前章批注
+  Timer? _reloadDebounce;
+
   // 书页三主题（既有持久化语义，色值与旧版一致）
   static const _bgColors = {
     ReaderTheme.paper: Color(0xFFFAFAF5),
@@ -112,6 +115,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         chapterIdx: _chapterIdx, scrollOffset: _scroll.offset));
   }
 
+  /// 批注随到随显：防抖后重查章级断点与当前章批注并 setState
+  /// （复用现有批注加载，不重复查正文；章行一并刷新供"生成中"提示判定）。
+  Future<void> _reloadAnnotations() async {
+    if (_chapters.isEmpty || _paragraphs.isEmpty) return;
+    final rows = await _repo.chapters(widget.projectId);
+    if (rows.isEmpty) return;
+    final anns =
+        await _repo.annotationsByParaId([for (final p in _paragraphs) p.id]);
+    if (!mounted) return;
+    setState(() {
+      _chapters = rows;
+      _chapterIdx = _chapterIdx.clamp(0, rows.length - 1);
+      _anns = anns;
+    });
+  }
+
   Future<void> _updatePrefs(ReaderPrefs p) async {
     setState(() => _prefs = p);
     await ref.read(settingsRepoProvider).saveReaderPrefs(p);
@@ -119,6 +138,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   @override
   void dispose() {
+    _reloadDebounce?.cancel();
     _scroll.dispose();
     for (final c in _l4Controllers.values) {
       c.dispose();
@@ -128,6 +148,28 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 批注随到随显：该项目管线状态变化（批注进度/重批/里程碑事件）→
+    // 防抖 800ms 重载当前章批注。只读 busy 做提示判定，不展示事件文案
+    // （novelEvents 的 progress/degraded/burst 事件 status 恒为 imported，
+    // milestone 才携带真实状态，故这里绝不读 status 做显示）。
+    ref.listen(pipelineControllerProvider, (prev, next) {
+      final s = next[widget.projectId];
+      if (s == null) return;
+      if (prev?[widget.projectId] == s) return;
+      _reloadDebounce?.cancel();
+      _reloadDebounce = Timer(const Duration(milliseconds: 800), () {
+        if (mounted) _reloadAnnotations();
+      });
+    });
+    final pipelineBusy =
+        ref.watch(pipelineControllerProvider)[widget.projectId]?.busy ?? false;
+    final chapterAnnotDone =
+        _chapters.isNotEmpty && _chapterIdx < _chapters.length
+            ? _chapters[_chapterIdx].annotDone
+            : true;
+    // 生成中提示：当前章批注尚未落库 + 引擎正在推进
+    final showHint =
+        !_loading && _chapters.isNotEmpty && !chapterAnnotDone && pipelineBusy;
     final bg = _bgColors[_prefs.theme]!;
     final fg = _textColors[_prefs.theme]!;
     return Scaffold(
@@ -173,19 +215,35 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                   title: '本书没有章节',
                   message: '重新导入这本小说可能可以修复；已有批注与卡片不受影响。',
                 )
-              : NotificationListener<ScrollEndNotification>(
-                  onNotification: (_) {
-                    _persistProgress();
-                    return false;
-                  },
-                  child: ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(
-                        Space.xl, Space.m, Space.xl, Space.xxl + Space.xl),
-                    itemCount: _paragraphs.length,
-                    itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
+              : Column(children: [
+                  if (showHint)
+                    const Material(
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 4),
+                          child: Center(
+                              child: Text('本章批注生成中…',
+                                  style: TextStyle(fontSize: 12))),
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: NotificationListener<ScrollEndNotification>(
+                      onNotification: (_) {
+                        _persistProgress();
+                        return false;
+                      },
+                      child: ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.fromLTRB(
+                            Space.xl, Space.m, Space.xl, Space.xxl + Space.xl),
+                        itemCount: _paragraphs.length,
+                        itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
+                      ),
+                    ),
                   ),
-                ),
+                ]),
     );
   }
 
