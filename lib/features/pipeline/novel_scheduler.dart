@@ -106,6 +106,10 @@ class NovelScheduler {
       await _followLane(projectId, total, mapLaneError);
     } catch (_) {
       _stopped = true; // 主泳道失败/取消 → 停掉地图泳道，别让它继续消耗调用
+      // 等地图泳道收尾再抛：在途的地图 LLM 调用（可达数十秒）结束后引擎才
+      // 落 FAILED/unbusy，否则用户立刻 retry/重批会与存活的旧泳道并发
+      // （重复调用 + characters 查改写竞态重复行 + FAILED 后继续刷事件）。
+      await mapLane;
       rethrow;
     }
     await mapLane;
@@ -143,6 +147,11 @@ class NovelScheduler {
 
   /// 目标判定用"第 target-1 章的完成标志"而非计数——计数会被批超界/模型
   /// 漏章形成的"洞"骗过（count 够但窗口内有洞 → 假就绪）。
+  ///
+  /// digest 目标与快照趟选批口径对齐（`digestBefore != null || annotDone`）：
+  /// 老项目回填态（0..k-1 章 annotDone=1 而 digest_before=null）若只认
+  /// digest_before，目标章永远无法满足 → 冲刺 digest 每轮白烧 burst 范围外的
+  /// 全书快照后熔断。新项目零影响：被批注章必有快照。
   Future<bool> _targetDone(int projectId, String stage, int target) async {
     final ch = await (_db.select(_db.chapters)
           ..where((t) => t.projectId.equals(projectId) &
@@ -151,7 +160,7 @@ class NovelScheduler {
     if (ch == null) return true; // 书比 target 短
     return switch (stage) {
       'map' => ch.mapDone,
-      'digest' => ch.digestBefore != null,
+      'digest' => ch.digestBefore != null || ch.annotDone,
       _ => ch.annotDone,
     };
   }
@@ -162,7 +171,8 @@ class NovelScheduler {
         if (_isCancelled() || _stopped) {
           throw const PipelineCancelled();
         }
-        final firstUnmapped = await _firstIdx(projectId, (c) => !c.mapDone);
+        final firstUnmapped =
+            await _firstIdx(projectId, (c) => c.mapDone.not());
         if (firstUnmapped == null) break; // 全书地图完成
         final c = await _counts(projectId);
         if (firstUnmapped >=
@@ -211,6 +221,10 @@ class NovelScheduler {
           // 上游地图未跟上（批为空）返回 0：让路等待。不能裸 continue——
           // drift 内存库查询经微任务完成，纯微任务循环会饿死事件循环定时器，
           // 地图泳道的 poll 等待永远无法醒来（热循环 100% CPU）。
+          // 此分支不加熔断：n==0 只会持续到地图前沿跟上；地图泳道若彻底
+          // 卡死（n==0 即抛 PipelineStageException(map) / 取消），mapLaneError
+          // 在本循环开头传导终结调度器，digest 无限等待被其失败路径兜住，
+          // 不会静默挂死。
           if (n == 0) await Future.delayed(_pollInterval);
           continue;
         }
@@ -241,17 +255,16 @@ class NovelScheduler {
     }
   }
 
-  /// 首个满足谓词的章号（null = 无）。
+  /// 首个满足谓词的章号（null = 无）。谓词下沉到 SQL + LIMIT 1：
+  /// 地图泳道每批都调用，禁止全表拉回内存逐行过滤。
   Future<int?> _firstIdx(
-      int projectId, bool Function(Chapter) predicate) async {
-    final rows = await (_db.select(_db.chapters)
-          ..where((t) => t.projectId.equals(projectId))
-          ..orderBy([(c) => OrderingTerm.asc(c.idx)]))
-        .get();
-    for (final r in rows) {
-      if (predicate(r)) return r.idx;
-    }
-    return null;
+      int projectId, Expression<bool> Function($ChaptersTable) predicate) async {
+    final row = await (_db.select(_db.chapters)
+          ..where((t) => t.projectId.equals(projectId) & predicate(t))
+          ..orderBy([(c) => OrderingTerm.asc(c.idx)])
+          ..limit(1))
+        .getSingleOrNull();
+    return row?.idx;
   }
 
   Future<void> _finish(int projectId) async {
@@ -287,17 +300,22 @@ class NovelScheduler {
   }
 
   /// 库页徽章计数（denormalized 到 meta，避免列表页逐卡查库）。
+  /// 读改写必须包事务：digest 趟对 meta.digest 的写在 LLM 调用后的事务里，
+  /// badge 的读→写若裸奔且穿插其间，旧快照写回会覆盖刚写入的 meta.digest
+  /// → 滚动摘要链断裂（drift 事务相互串行，包事务即互斥）。
   Future<void> _updateBadge(int projectId, int annotatedChapters) async {
     try {
-      final p = await (_db.select(_db.projects)
-            ..where((t) => t.id.equals(projectId)))
-          .getSingleOrNull();
-      if (p == null) return;
-      final meta = NovelMeta.fromJson(p.metaJson);
-      if (meta.annotatedChapters == annotatedChapters) return;
-      meta.annotatedChapters = annotatedChapters;
-      await (_db.update(_db.projects)..where((t) => t.id.equals(projectId)))
-          .write(ProjectsCompanion(metaJson: Value(meta.encode())));
+      await _db.transaction(() async {
+        final p = await (_db.select(_db.projects)
+              ..where((t) => t.id.equals(projectId)))
+            .getSingleOrNull();
+        if (p == null) return;
+        final meta = NovelMeta.fromJson(p.metaJson);
+        if (meta.annotatedChapters == annotatedChapters) return;
+        meta.annotatedChapters = annotatedChapters;
+        await (_db.update(_db.projects)..where((t) => t.id.equals(projectId)))
+            .write(ProjectsCompanion(metaJson: Value(meta.encode())));
+      });
     } catch (_) {
       // 徽章计数失败不影响主线
     }
@@ -306,15 +324,31 @@ class NovelScheduler {
   Future<int> _chapterCount(int projectId) async =>
       (await _counts(projectId)).total;
 
+  /// 计数（热路径：主泳道/地图泳道每轮都调用）→ selectOnly 条件聚合单查询，
+  /// 禁止全表拉回内存逐行过滤。SUM 借 CASE WHEN 归一 0/1，不用 FILTER 子句
+  /// （老安卓系统 sqlite < 3.30 不支持）。digestReady 用"快照已满足"口径
+  /// （digestBefore != null || annotDone）：与快照趟选批条件（!annotDone 才补
+  /// 快照）对齐——回填老项目里已批注无快照的章不算"未就绪"，否则主泳道
+  /// digest 闸门永远不满足：k 小 → 卡死空转（后续章永不批注），k 大 → 冲刺
+  /// 目标永不满足、白烧全书快照后熔断。新项目零影响：被批注章必有快照。
   Future<_Counts> _counts(int projectId) async {
-    final rows = await (_db.select(_db.chapters)
-          ..where((t) => t.projectId.equals(projectId)))
-        .get();
+    final ch = _db.chapters;
+    Expression<int> flag(Expression<bool> cond) => CaseWhenExpression(
+        cases: [CaseWhen(cond, then: const Constant(1))],
+        orElse: const Constant(0));
+    final totalExp = countAll();
+    final mapExp = flag(ch.mapDone).sum();
+    final digestExp = flag(ch.digestBefore.isNotNull() | ch.annotDone).sum();
+    final annotExp = flag(ch.annotDone).sum();
+    final row = await (_db.selectOnly(ch)
+          ..where(ch.projectId.equals(projectId))
+          ..addColumns([totalExp, mapExp, digestExp, annotExp]))
+        .getSingle();
     return (
-      mapDone: rows.where((c) => c.mapDone).length,
-      digestReady: rows.where((c) => c.digestBefore != null).length,
-      annotDone: rows.where((c) => c.annotDone).length,
-      total: rows.length,
+      total: row.read(totalExp) ?? 0,
+      mapDone: row.read(mapExp) ?? 0,
+      digestReady: row.read(digestExp) ?? 0,
+      annotDone: row.read(annotExp) ?? 0,
     );
   }
 }

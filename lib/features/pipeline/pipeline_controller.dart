@@ -10,6 +10,7 @@ import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
+import 'package:peixi/core/logging/crash_log.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
 import 'package:peixi/core/novel/epub_parser.dart';
@@ -171,13 +172,19 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     if (e.isBusy(projectId)) {
       throw Exception('管线运行中，请先停止再重批单章');
     }
-    final pass = NovelAnnotatePass(
-        db: ref.read(databaseProvider), llm: ref.read(llmServiceProvider));
+    final db = ref.read(databaseProvider);
+    final pass = NovelAnnotatePass(db: db, llm: ref.read(llmServiceProvider));
     await pass.reannotateChapter(projectId, chapterIdx);
+    // 完成事件带项目当前真实状态：固定发 imported 会被 _onEvent 判 busy=true
+    // 且再无事件解锁 → 库卡片永久"处理中"。
+    final p = await (db.select(db.projects)
+          ..where((t) => t.id.equals(projectId)))
+        .getSingleOrNull();
+    if (p == null) return; // 重批途中项目被删：无状态可发
     _onEvent(PipelineEvent(
         projectId: projectId,
         stage: 'novel',
-        status: ProjectStatus.imported,
+        status: ProjectStatus.fromDb(p.status),
         detail: '已重批第 $chapterIdx 章'));
   }
 
@@ -199,6 +206,11 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     _novelRuns.add(run);
     try {
       await run;
+    } catch (e, s) {
+      // 引擎外壳已吞业务异常并落盘；能漏到这里的是外壳之外的意外（如
+      // "取消+删除"竞态下项目中途被删）。unawaited(_startNovel) 的异常
+      // 不能逃逸成未处理异步错误。
+      CrashLog.write('pipeline.novel', e, s);
     } finally {
       _novelRuns.remove(run);
     }
@@ -472,6 +484,9 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
 
   /// 删除项目：DB 级联 + 临时音频/字幕文件。
   Future<void> deleteProject(int projectId) async {
+    // 先请求取消再删除：在途管线在批边界退出，避免"旧运行删除后仍写库/刷
+    // 事件"与引擎半途异常（项目已删）竞态。
+    await cancel(projectId);
     final db = ref.read(databaseProvider);
     final p = await (db.select(db.projects)
           ..where((t) => t.id.equals(projectId)))

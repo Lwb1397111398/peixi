@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:drift/drift.dart' show OrderingTerm, Value;
+import 'package:drift/drift.dart'
+    show BooleanExpressionOperators, OrderingTerm, Value;
 import 'package:drift/native.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +13,7 @@ import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
+import 'package:peixi/features/pipeline/novel_pipeline.dart';
 import 'package:peixi/features/pipeline/novel_scheduler.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
@@ -100,6 +103,45 @@ String annResp([List<int>? idxs]) {
   ].join(',')}]}';
 }
 
+/// 地图泳道"在途调用"模拟：第 [hangFromMapRequest] 个起的 map 请求挂起不响应，
+/// [release] 后放行（返回全量 map 响应）。用于断言主泳道失败/取消时引擎
+/// 等待地图泳道收尾才 unbusy。
+class HangingMapAdapter extends LaneScriptedAdapter {
+  HangingMapAdapter({
+    required super.mapBodies,
+    required super.digestBodies,
+    required super.annotateBodies,
+    this.hangFromMapRequest = 2,
+  });
+  final int hangFromMapRequest;
+  final _gate = Completer<void>();
+  var _mapSeen = 0;
+
+  void release() => _gate.complete();
+
+  @override
+  Future<ResponseBody> fetch(
+      RequestOptions options, Stream<Uint8List>? requestStream, Future? cancelFuture) async {
+    final prompt = (options.data as Map)['messages'].last['content'] as String;
+    if (prompt.contains('[已知人物名单]') &&
+        _mapSeen++ >= hangFromMapRequest &&
+        !_gate.isCompleted) {
+      requests.add(options);
+      order.add('map');
+      await _gate.future;
+      return ResponseBody.fromString(
+          '{"choices":[{"message":{"role":"assistant","content":'
+          '${jsonEncode(mapResp())}}}],'
+          '"usage":{"prompt_tokens":10,"completion_tokens":20}}',
+          200,
+          headers: {
+            'content-type': ['application/json']
+          });
+    }
+    return super.fetch(options, requestStream, cancelFuture);
+  }
+}
+
 void main() {
   late AppDatabase db;
   setUp(() => db = AppDatabase(NativeDatabase.memory()));
@@ -116,13 +158,13 @@ void main() {
           },
         ));
 
-  /// 10 章书（每章 2 段）；计划 Task 7 的标准参数：burst=4、map=2、digest=3、
+  /// n 章书（每章 2 段）；计划 Task 7 的标准参数：burst=4、map=2、digest=3、
   /// annotate=2、mapLead=3。
-  Future<int> seedBook() async => NovelImporter(db: db).import(
+  Future<int> seedBook([int n = 10]) async => NovelImporter(db: db).import(
       title: '书',
       sourcePath: '/book.txt',
       doc: NovelDoc(chapters: [
-        for (var i = 0; i < 10; i++)
+        for (var i = 0; i < n; i++)
           NovelChapter(
               idx: i,
               title: '第${i + 1}章',
@@ -144,6 +186,32 @@ void main() {
   Future<Project> projectOf(int id) => (db.select(db.projects)
         ..where((t) => t.id.equals(id)))
       .getSingle();
+
+  /// 构造回填老项目形态（backfillNovelV5 产物）：[0, k) 章 annotDone=1 而
+  /// digest_before=null（旧断点无逐章快照）；第 k 章（首个未批注章）挂旧断点
+  /// 快照；[0, mapThrough] 章 mapDone=1 带摘要（回填按 summary 非空置位）；
+  /// 旧 meta.digest 保留在 meta（writeBackWith 不清 digest）。
+  Future<void> seedBackfillShape(int id,
+      {required int total, required int k, required int mapThrough}) async {
+    for (var i = 0; i < total; i++) {
+      final mapped = i <= mapThrough;
+      await (db.update(db.chapters)
+            ..where((t) => t.projectId.equals(id) & t.idx.equals(i)))
+          .write(ChaptersCompanion(
+              mapDone: Value(mapped),
+              summary: Value(mapped ? '旧地图摘要$i' : null),
+              annotDone: Value(i < k),
+              digestBefore:
+                  i == k ? const Value('旧全书摘要') : const Value(null)));
+    }
+    final p = await projectOf(id);
+    final meta = NovelMeta.fromJson(p.metaJson)
+      ..digest = '旧全书摘要'
+      ..chapterCount = total
+      ..annotatedChapters = k;
+    await (db.update(db.projects)..where((t) => t.id.equals(id)))
+        .write(ProjectsCompanion(metaJson: Value(meta.encode())));
+  }
 
   group('NovelScheduler（首屏冲刺 + 双泳道跟随）', () {
     test('首屏冲刺：前 4 章 map→digest→annotate 顺序就绪；burst 事件后取消', () async {
@@ -431,5 +499,154 @@ void main() {
       final chs = await chaptersOf(id);
       expect(chs.every((c) => !c.annotDone), isTrue);
     });
+  });
+
+  group('NovelScheduler 回填老项目（digest 记账对齐快照趟口径）', () {
+    final backfillParams = const NovelParams(
+        mapBatchChapters: 2,
+        digestBatchChapters: 3,
+        annotateBatchChapters: 2,
+        initialBurstChapters: 10,
+        mapLeadChapters: 3);
+
+    test('场景A（total=15, k=6, burst=10）：主泳道不再挂死——10..14 章照常批注，'
+        '已批注章不被 digest 趟触碰', () async {
+      final id = await seedBook(15);
+      await seedBackfillShape(id, total: 15, k: 6, mapThrough: 6);
+      final adapter = LaneScriptedAdapter(
+          mapBodies: [mapResp(List.generate(15, (i) => i))],
+          digestBodies: [digestResp()],
+          annotateBodies: [annResp(List.generate(15, (i) => i))]);
+      final scheduler = NovelScheduler(
+          db: db,
+          llm: llm(adapter),
+          params: backfillParams,
+          isCancelled: () => false);
+      // 修复前：digestReady 只数 digestBefore → 主泳道 digest 闸门
+      // （4 < 10+1）永不满足，digest 分支无限空转，后续章永不批注（挂死）。
+      await scheduler.run(id);
+
+      final chs = await chaptersOf(id);
+      expect(chs.map((c) => c.annotDone), everyElement(isTrue),
+          reason: '全书批注完成（关键：第 10~14 章）');
+      for (var i = 0; i <= 5; i++) {
+        expect(chs[i].digestBefore, isNull, reason: '已批注章$i不被 digest 趟触碰');
+      }
+      expect(chs[6].digestBefore, '旧全书摘要', reason: '旧断点快照保留不重写');
+      final p = await projectOf(id);
+      expect(p.status, 'READY');
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('场景B（total=10, k=5, burst=4）：冲刺不白烧 burst 外快照、不熔断、正常完成',
+        () async {
+      final id = await seedBook();
+      await seedBackfillShape(id, total: 10, k: 5, mapThrough: 9);
+      final adapter = LaneScriptedAdapter(
+          mapBodies: [mapResp()],
+          digestBodies: [digestResp()],
+          annotateBodies: [annResp()]);
+      var digestCallsAtBurst = -1;
+      final scheduler = NovelScheduler(
+          db: db,
+          llm: llm(adapter),
+          params: params,
+          isCancelled: () => false,
+          onEvent: (ev) {
+            if (ev.kind == 'burst') {
+              digestCallsAtBurst =
+                  adapter.order.where((k) => k == 'digest').length;
+            }
+          });
+      // 修复前：冲刺 digest 目标章（第 3 章）digestBefore=null 永不满足 →
+      // 每轮为 burst 外的章白烧全书快照，随后 10 轮熔断 PipelineStageException('digest')。
+      await scheduler.run(id);
+
+      expect(digestCallsAtBurst, 0, reason: '冲刺阶段零 digest 调用（目标已按新口径满足）');
+      final chs = await chaptersOf(id);
+      expect(chs.map((c) => c.annotDone), everyElement(isTrue));
+      expect(chs[5].digestBefore, '旧全书摘要', reason: '旧断点快照不重写');
+      for (var i = 6; i < 10; i++) {
+        expect(chs[i].digestBefore, isNotNull,
+            reason: '章$i在跟随阶段批注前按语义需要补快照');
+      }
+      final p = await projectOf(id);
+      expect(p.status, 'READY');
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('徽章更新包事务：预置 meta.digest 后随批注进度更新，digest 键不丢', () async {
+      final id = await seedBook();
+      final p0 = await projectOf(id);
+      final meta0 = NovelMeta.fromJson(p0.metaJson)..digest = '旧全书摘要';
+      await (db.update(db.projects)..where((t) => t.id.equals(id)))
+          .write(ProjectsCompanion(metaJson: Value(meta0.encode())));
+
+      final adapter = LaneScriptedAdapter(
+          mapBodies: [mapResp()],
+          digestBodies: [digestResp()],
+          annotateBodies: [annResp()]);
+      final scheduler = NovelScheduler(
+          db: db, llm: llm(adapter), params: params, isCancelled: () => false);
+      await scheduler.run(id);
+      await Future<void>.delayed(const Duration(milliseconds: 50)); // 徽章 unawaited 落库
+
+      final p = await projectOf(id);
+      final meta = NovelMeta.fromJson(p.metaJson);
+      expect(meta.digest, isNotNull, reason: 'badge 读改写不得覆盖回退 meta.digest');
+      expect(meta.digest, isNotEmpty);
+      expect(meta.annotatedChapters, 10);
+    });
+  });
+
+  group('NovelScheduler 泳道收尾（主泳道失败等待地图泳道）', () {
+    test('主泳道失败时地图泳道在途：引擎保持 busy，FAILED 与事件延后到在途调用结束',
+        () async {
+      final id = await seedBook();
+      // 形态：冲刺批注响应漏第 1 章（洞）→ 冲刺完成时 annotDone=3（0,2,3），
+      // digestReady=4 ≥ annotDone+1 → 跟随模式主泳道直接进批注分支；批注批
+      // [1,2,3] 命中冲刺批的响应缓存，第 1 章恒缺 → 连续 3 批零产出 →
+      // PipelineStageException('annotate')（主泳道失败，无需地图前沿推进）。
+      // 地图泳道首个跟随请求（第 3 个 map）挂起在途（batch 4,5）。
+      final annotateParams = const NovelParams(
+          mapBatchChapters: 2,
+          digestBatchChapters: 3,
+          annotateBatchChapters: 3,
+          initialBurstChapters: 4,
+          mapLeadChapters: 3);
+      final adapter = HangingMapAdapter(
+          mapBodies: [mapResp()],
+          digestBodies: [digestResp()],
+          annotateBodies: [annResp([0, 2]), annResp([3])]);
+      final engine = NovelPipelineEngine(db: db);
+      final scheduler = NovelScheduler(
+          db: db,
+          llm: llm(adapter),
+          params: annotateParams,
+          isCancelled: () => engine.isCancelled(id));
+      engine.attachRun(scheduler.run);
+      final events = <PipelineEvent>[];
+      engine.events.listen(events.add);
+      final run = engine.run(id);
+
+      // 等地图泳道首个跟随请求挂起在途（第 3 个 map 请求被接收未响应）
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (adapter.order.where((k) => k == 'map').length < 3) {
+        if (DateTime.now().isAfter(deadline)) fail('地图泳道在途请求未在预期内发生');
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      // 主泳道批注零进展熔断约 4 轮（每轮 100ms 让路）+ 异步落库，留足余量
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      expect(engine.isBusy(id), isTrue,
+          reason: '地图泳道在途调用结束前引擎不得 unbusy（否则重跑可与旧泳道并发）');
+      expect(events.where((e) => e.status == ProjectStatus.failed), isEmpty,
+          reason: 'FAILED 事件延后到地图泳道收尾');
+
+      adapter.release();
+      await run;
+      expect(engine.isBusy(id), isFalse);
+      final p = await projectOf(id);
+      expect(p.status, 'FAILED');
+      expect(p.failedStage, 'annotate');
+      expect(events.where((e) => e.status == ProjectStatus.failed), hasLength(1));
+    }, timeout: const Timeout(Duration(seconds: 60)));
   });
 }

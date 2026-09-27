@@ -75,7 +75,12 @@ class NovelPipelineEngine {
           st == ProjectStatus.failed ? ProjectStatus.imported : st);
       await _runFn?.call(projectId);
     } on PipelineCancelled {
-      final p = await _project(projectId);
+      // 取消+删除竞态：项目可能已被删，无处落事件——直接静默结束
+      // （进度已落库；此处抛错会成为未捕获异步错误，见 controller._startNovel）。
+      final p = await (_db.select(_db.projects)
+            ..where((t) => t.id.equals(projectId)))
+          .getSingleOrNull();
+      if (p == null) return;
       _emit(projectId, 'novel', ProjectStatus.fromDb(p.status),
           detail: '已取消（进度已保存，可继续）', cancelled: true);
     } on PipelineStageException catch (e) {
