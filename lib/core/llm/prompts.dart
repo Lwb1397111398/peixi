@@ -48,51 +48,6 @@ class Prompts {
       '[新场景]$newScene\n'
       '输出：{"digest":"..."}';
 
-  /// Prompt D（小说批注）结构与 B 同、锚定 para_range，见 novel_annotation()。
-  /// 小说批注 Prompt D 在 M2 A3 中以 [novelAnnotation] 提供。
-
-  /// Prompt N2（小说人物提取，设计稿第五节 N2；措辞自拟，需维持名单滚动更新）
-  static String novelCast({
-    required String roster,
-    required String chapterTitle,
-    required String chapterText,
-  }) =>
-      '你是小说人物整理助手。以下是截至本章为止的已知人物名单，以及本章全文。\n'
-      '[已知人物名单]\n$roster\n'
-      '[本章标题]$chapterTitle\n'
-      '[本章全文]\n$chapterText\n'
-      '任务：\n'
-      '①维护人物名单：收录本章新出现的重要人物，并更新名单中本章人设发生变化的旧人物（未变化的人物不必重复输出）。\n'
-      '②给本章写一句话剧情摘要（60字内），只概括本章内容。\n'
-      '输出：{"characters":[{"name":"","profile":"一句话人设：身份/性格/立场"}],"chapter_summary":"..."}\n'
-      '要求：只依据名单与本章文本，禁止编造未出现的人物；无名龙套不必收录。';
-
-  /// Prompt D：小说批注（设计稿第七节：结构同 B，锚定 para_range，含密度指令）
-  static String novelAnnotation({
-    required String digest,
-    required String recentContext,
-    required String blockText,
-    required int paraStart,
-    required int paraEnd,
-  }) =>
-      '你是用户的私人阅读教练，陪用户提升情商与思维。只准使用截至当前段落的信息。\n'
-      '[前情摘要]$digest\n'
-      '[本章已读概要]$recentContext\n'
-      '[当前块正文（每行开头 [n] 是段落编号 para_idx，批注必须锚定到它）]\n$blockText\n'
-      '输出：\n'
-      '{"para_range":[$paraStart,$paraEnd],\n'
-      ' "block_summary":"两句话概括本块情节与转折",\n'
-      ' "annotations":[\n'
-      '  {"para_idx":0,"type":"L1","content":"潜台词解读，点破话外之音"},\n'
-      '  {"para_idx":0,"type":"L2","content":"心理分析：动机/性格/情绪"},\n'
-      '  {"para_idx":0,"type":"L3","content":{"term":"名词","text":"150字内知识","uncertain":false}},\n'
-      '  {"para_idx":0,"type":"L4","content":{"question":"抛给用户的开放性问题，逼其代入思考","perspectives":["参考角度1","参考角度2","参考角度3"]}}\n'
-      ' ]}\n'
-      '要求：批注密度：平均每屏(约5段)1-2条，只在有分析价值的段落标注，宁缺毋滥。'
-      'para_idx 必须取自正文出现过的编号；type 只能是 L1/L2/L3/L4；'
-      'L1/L2 的 content 为字符串，L3/L4 的 content 为对象；'
-      '分析必须引用具体原文；L4 问题要具体到本块中的抉择，不要空泛鸡汤。';
-
   /// Prompt N2v2（地图趟，设计文档 §7.1；summary 槽位）
   static String novelMap({
     required String roster,

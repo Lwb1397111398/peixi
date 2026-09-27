@@ -49,5 +49,6 @@ String stageLabel(String stage) => switch (stage) {
       'segment' => '场景切分',
       'commentary' => '解说生成',
       'finalize' => '收尾',
+      'novel' => '处理中',
       _ => stage,
     };

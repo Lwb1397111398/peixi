@@ -1,46 +1,15 @@
-import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:async';
 
-import 'package:drift/drift.dart' show OrderingTerm, Value;
+import 'package:drift/drift.dart' show OrderingTerm;
 import 'package:drift/native.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
-import 'package:peixi/core/llm/llm_routing.dart';
-import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/novel_pipeline.dart';
-
-/// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
-const _route = ChannelRoute(
-    id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
-
-/// 按请求顺序返回预置响应的假适配器（每次调用消耗一个脚本）。
-class ScriptedAdapter implements HttpClientAdapter {
-  ScriptedAdapter(this.bodies);
-  final List<String> bodies;
-  final requests = <RequestOptions>[];
-
-  @override
-  Future<ResponseBody> fetch(RequestOptions options,
-      Stream<Uint8List>? requestStream, Future? cancelFuture) async {
-    final i = requests.length;
-    requests.add(options);
-    final body = i < bodies.length ? bodies[i] : bodies.last;
-    return ResponseBody.fromString(
-        '{"choices":[{"message":{"role":"assistant","content":${jsonEncode(body)}}}],'
-        '"usage":{"prompt_tokens":10,"completion_tokens":20}}',
-        200,
-        headers: {
-          'content-type': ['application/json']
-        });
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
+import 'package:peixi/features/pipeline/pipeline_engine.dart';
+import 'package:peixi/features/pipeline/project_status.dart';
 
 void main() {
   late AppDatabase db;
@@ -103,7 +72,7 @@ void main() {
     });
   });
 
-  group('NovelPipelineEngine（N2→N3→N4 状态机）', () {
+  group('NovelPipelineEngine（调度器语义外壳）', () {
     Future<int> seed() async => db.into(db.projects).insert(
         ProjectsCompanion.insert(
             type: 'novel',
@@ -111,54 +80,61 @@ void main() {
             sourcePath: '/x.txt',
             status: 'IMPORTED'));
 
-    test('正常路径 IMPORTED→MAPPED→COMMENTARY_DONE→READY', () async {
+    test('正常路径：runFn 成功完成，外壳不改状态、发 novel 起点事件', () async {
       final id = await seed();
-      final calls = <String>[];
+      final calls = <int>[];
       final e = NovelPipelineEngine(db: db);
-      e.attachCollaborators(
-        extractCast: (pid) async => calls.add('cast'),
-        annotate: (pid) async => calls.add('annotate'),
-      );
-      final events = <String>[];
-      e.events.listen((ev) => events.add('${ev.stage}:${ev.status.db}'));
+      e.attachRun((pid) async => calls.add(pid));
+      final events = <PipelineEvent>[];
+      e.events.listen(events.add);
       await e.run(id);
 
-      expect(calls, ['cast', 'annotate']);
+      expect(calls, [id]);
       final p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
           .getSingle();
-      expect(p.status, 'READY');
-      // 阶段开始事件携带进入时的状态；状态落库在阶段成功后
-      expect(events, ['map:IMPORTED', 'commentary:MAPPED', 'finalize:READY']);
+      expect(p.status, 'IMPORTED'); // 里程碑由调度器落库，外壳不碰
+      expect(events, hasLength(1));
+      expect(events.single.stage, 'novel');
+      expect(events.single.status, ProjectStatus.imported);
     });
 
-    test('annotate 失败 → FAILED+failed_stage，重试不重跑 N2', () async {
+    test('PipelineStageException → FAILED+failed_stage + failed 事件', () async {
       final id = await seed();
-      final calls = <String>[];
       final e = NovelPipelineEngine(db: db);
-      e.attachCollaborators(
-        extractCast: (pid) async => calls.add('cast'),
-        annotate: (pid) async => throw Exception('LLM 超时'),
-      );
+      e.attachRun((pid) async =>
+          throw PipelineStageException('digest', StateError('合成失败')));
+      final events = <PipelineEvent>[];
+      e.events.listen(events.add);
       await e.run(id);
-      var p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
+
+      final p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
           .getSingle();
       expect(p.status, 'FAILED');
-      expect(p.failedStage, 'commentary');
-
-      e.attachCollaborators(annotate: (pid) async => calls.add('annotate'));
-      await e.retry(id);
-      p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
-          .getSingle();
-      expect(p.status, 'READY');
-      expect(calls, ['cast', 'annotate']); // cast 未被重跑
+      expect(p.failedStage, 'digest');
+      final failed = events.lastWhere((ev) => ev.status == ProjectStatus.failed);
+      expect(failed.stage, 'novel');
+      expect(failed.detail, contains('digest'));
     });
 
-    test('extractCast 失败 → FAILED+failed_stage=map', () async {
+    test('PipelineCancelled → cancelled 事件，状态不变', () async {
       final id = await seed();
       final e = NovelPipelineEngine(db: db);
-      e.attachCollaborators(
-        extractCast: (pid) async => throw Exception('配额不足'),
-      );
+      e.attachRun((pid) async => throw const PipelineCancelled());
+      final events = <PipelineEvent>[];
+      e.events.listen(events.add);
+      await e.run(id);
+
+      final p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
+          .getSingle();
+      expect(p.status, 'IMPORTED'); // 取消不落 FAILED
+      expect(events.last.cancelled, isTrue);
+      expect(events.last.detail, contains('已取消'));
+    });
+
+    test('未知异常兜底 → FAILED+failed_stage=map', () async {
+      final id = await seed();
+      final e = NovelPipelineEngine(db: db);
+      e.attachRun((pid) async => throw Exception('天灾'));
       await e.run(id);
       final p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
           .getSingle();
@@ -166,120 +142,52 @@ void main() {
       expect(p.failedStage, 'map');
     });
 
-    test('同项目防并发', () async {
+    test('FAILED 项目重跑：起点事件用 IMPORTED；外壳成功路径不写状态（里程碑归调度器）',
+        () async {
       final id = await seed();
-      final calls = <String>[];
       final e = NovelPipelineEngine(db: db);
-      e.attachCollaborators(
-        extractCast: (pid) async {
-          calls.add('cast');
-          await Future<void>.delayed(const Duration(milliseconds: 30));
-        },
-        annotate: (pid) async => calls.add('annotate'),
-      );
-      await Future.wait([e.run(id), e.run(id)]);
-      expect(calls.where((c) => c == 'cast'), hasLength(1));
-    });
-  });
+      e.attachRun((pid) async => throw Exception('第一次失败'));
+      await e.run(id);
 
-  group('NovelCharacterExtractor（N2 人物提取）', () {
-    Future<(int, List<int>)> seedWithChapters() async {
-      final id = await NovelImporter(db: db).import(
-          title: '书', sourcePath: '/book.txt',
-          doc: const NovelDoc(chapters: [
-            NovelChapter(idx: 0, title: '第一章', paragraphs: ['甲拔剑指向乙。']),
-            NovelChapter(idx: 1, title: '第二章', paragraphs: ['乙冷笑一声。', '丙从暗处走出。']),
-          ]));
-      final chapters = await (db.select(db.chapters)
-            ..where((t) => t.projectId.equals(id))
-            ..orderBy([(c) => OrderingTerm.asc(c.idx)]))
-          .get();
-      return (id, chapters.map((c) => c.id).toList());
-    }
-
-    LlmService llm(ScriptedAdapter adapter) =>
-        LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-          ..updateRouting(const RoutingTable(
-            channels: [_route],
-            slots: {LlmSlot.summary: SlotBinding(channelId: 0, model: 'flash')},
-          ));
-
-    test('逐章提取：人物落库、章摘要落库、名单滚动传递（指代一致）', () async {
-      final (id, _) = await seedWithChapters();
-      final adapter = ScriptedAdapter([
-        '{"characters":['
-        '{"name":"甲","profile":"热血少年剑客"},'
-        '{"name":"乙","profile":"白衣剑派弟子"}],"chapter_summary":"甲向乙拔剑对峙。"}',
-        '{"characters":[{"name":"丙","profile":"神秘暗探"}],"chapter_summary":"乙与丙现身。"}',
-      ]);
-      final progress = <int>[];
-      await NovelCharacterExtractor(db: db, llm: llm(adapter),
-              onProgress: (d, t) => progress.add(d))
-          .extract(id);
-
-      final chars = await (db.select(db.characters)
-            ..where((t) => t.projectId.equals(id)))
-          .get();
-      final byName = {for (final c in chars) c.name: c};
-      expect(byName['甲']!.aliasesJson, '热血少年剑客');
-      expect(byName['乙']!.aliasesJson, '白衣剑派弟子');
-      expect(byName['丙']!.aliasesJson, '神秘暗探');
-      expect(byName['丙']!.source, 'auto');
-
-      final chapters = await (db.select(db.chapters)
-            ..where((t) => t.projectId.equals(id))
-            ..orderBy([(c) => OrderingTerm.asc(c.idx)]))
-          .get();
-      expect(chapters[0].summary, '甲向乙拔剑对峙。');
-      expect(chapters[1].summary, '乙与丙现身。');
-
-      // 第二次调用的提示词包含第一次提取出的人物名单（滚动名单）
-      expect(adapter.requests, hasLength(2));
-      final secondPrompt =
-          (adapter.requests[1].data as Map)['messages'].last['content'] as String;
-      expect(secondPrompt, contains('甲：热血少年剑客'));
-      expect(secondPrompt, contains('乙：白衣剑派弟子'));
-      // 分层：人物提取用 cheap 模型
-      expect((adapter.requests[0].data as Map)['model'], 'flash');
-      expect(progress, [1, 2]);
+      final events = <PipelineEvent>[];
+      e.events.listen(events.add);
+      e.attachRun((pid) async {});
+      await e.retry(id);
+      // 起点事件：FAILED 以 IMPORTED 身份重新出发（外壳语义）
+      expect(events.first.status, ProjectStatus.imported);
+      // 成功路径外壳不落盘状态——FAILED→里程碑升级由调度器 _setMilestone 负责
+      final p = await (db.select(db.projects)..where((t) => t.id.equals(id)))
+          .getSingle();
+      expect(p.status, 'FAILED');
+      expect(p.failedStage, 'map'); // 残留 failed_stage 由首个里程碑清空
     });
 
-    test('旧人物人设更新（同名更新不重复插入）', () async {
-      final (id, _) = await seedWithChapters();
-      final adapter = ScriptedAdapter([
-        '{"characters":[{"name":"乙","profile":"伏低做小的卧底"}],"chapter_summary":"s1"}',
-        '{"characters":[{"name":"乙","profile":"终于亮明身份的卧底"}],"chapter_summary":"s2"}',
-      ]);
-      final ext = NovelCharacterExtractor(db: db, llm: llm(adapter));
-      await ext.extract(id);
-      final chars = await db.select(db.characters).get();
-      expect(chars, hasLength(1));
-      expect(chars.single.name, '乙');
-      expect(chars.single.aliasesJson, '终于亮明身份的卧底');
-    });
+    test('isBusy 语义：运行中 true、结束后 false；同项目防并发', () async {
+      final id = await seed();
+      final e = NovelPipelineEngine(db: db);
+      final gate = Completer<void>();
+      e.attachRun((pid) async {
+        expect(e.isBusy(id), isTrue);
+        expect(e.isCancelled(id), isFalse);
+        await gate.future;
+      });
+      final run1 = e.run(id);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(e.isBusy(id), isTrue);
 
-    test('续跑：已有 summary 的章跳过（零 LLM 调用）', () async {
-      final (id, chapterIds) = await seedWithChapters();
-      await (db.update(db.chapters)..where((t) => t.id.equals(chapterIds[0])))
-          .write(const ChaptersCompanion(summary: Value('已处理')));
-      final adapter = ScriptedAdapter([
-        '{"characters":[],"chapter_summary":"s2"}',
-      ]);
-      await NovelCharacterExtractor(db: db, llm: llm(adapter)).extract(id);
-      expect(adapter.requests, hasLength(1)); // 只有第二章被调用
-    });
+      await e.run(id); // 第二次 run 直接返回（防并发）
+      expect(e.isBusy(id), isTrue); // 第一次仍在跑
 
-    test('LLM 返回缺字段容错', () async {
-      final (id, _) = await seedWithChapters();
-      final adapter = ScriptedAdapter([
-        '{"characters":[{"name":""},{"profile":"无名氏"}],"chapter_summary":"x"}',
-        '{"chapter_summary":"y"}',
-      ]);
-      await NovelCharacterExtractor(db: db, llm: llm(adapter)).extract(id);
-      final chars = await db.select(db.characters).get();
-      expect(chars, isEmpty); // 空名跳过，无 profile 的条目也跳过
-      final chapters = await db.select(db.chapters).get();
-      expect(chapters.every((c) => c.summary != null), isTrue);
+      e.requestCancel(id);
+      expect(e.isCancelled(id), isTrue);
+      gate.complete();
+      await run1;
+
+      expect(e.isBusy(id), isFalse);
+      // 上轮取消标记不带入新一轮（续跑可正常推进）
+      e.attachRun((pid) async => expect(e.isCancelled(id), isFalse));
+      await e.run(id);
+      expect(e.isBusy(id), isFalse);
     });
   });
 }

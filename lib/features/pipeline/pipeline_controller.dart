@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -17,9 +18,10 @@ import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/providers.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
-import 'package:peixi/features/pipeline/novel_commentary_generator.dart';
+import 'package:peixi/features/pipeline/novel_annotate_pass.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/novel_pipeline.dart';
+import 'package:peixi/features/pipeline/novel_scheduler.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/pipeline_queue.dart';
 import 'package:peixi/features/pipeline/scene_segmenter.dart';
@@ -126,44 +128,90 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     return e;
   }
 
-  /// 小说管线（N2-N4）。
+  /// 小说管线（两遍式）：调度器驱动，不占 PipelineQueue 串行车道（§6.2）。
+  /// 每次运行时新建调度器（读取最新 novel.* 参数），引擎只管事件/防并发/失败语义。
   Future<NovelPipelineEngine> novelEngine() async {
     if (_novelEngine != null) return _novelEngine!;
     final e = NovelPipelineEngine(db: ref.read(databaseProvider));
     final llm = ref.read(llmServiceProvider);
     final db = ref.read(databaseProvider);
-    e.attachCollaborators(
-      extractCast: (id) => NovelCharacterExtractor(
-        db: db,
-        llm: llm,
-        isCancelled: () => e.isCancelled(id),
-      ).extract(id),
-      annotate: (id) => NovelCommentaryGenerator(db: db, llm: llm,
+    final repo = ref.read(settingsRepoProvider);
+    e.attachRun((id) async {
+      final params = await repo.loadNovelParams();
+      final recall = null; // Task 13 接入：vectorRecall && embedding 槽位已绑定时 → NovelRecallService(db: db, llm: llm)
+      final scheduler = NovelScheduler(
+          db: db,
+          llm: llm,
+          params: params,
+          recall: recall,
           isCancelled: () => e.isCancelled(id),
-          onProgress: (done, total) => _onEvent(PipelineEvent(
-              projectId: id,
-              stage: 'commentary',
-              status: ProjectStatus.mapped,
-              progress: total == 0 ? 0 : done / total))).generate(id),
-    );
+          onEvent: (ev) => _onSchedulerEvent(id, ev));
+      await scheduler.run(id);
+    });
     e.events.listen(_onEvent);
     _novelEngine = e;
     return e;
   }
 
-  /// 入队串行推进管线（见 PipelineQueue 注释）。
-  void _startRun(String type, int projectId) {
-    _queue.add(projectId, () async {
-      if (type == 'novel') {
-        await (await novelEngine()).run(projectId);
-      } else {
-        await (await engine()).run(projectId);
-      }
-    });
+  void _onSchedulerEvent(int projectId, NovelSchedulerEvent ev) {
+    _onEvent(PipelineEvent(
+        projectId: projectId,
+        stage: 'novel',
+        status: ev.status ?? ProjectStatus.imported,
+        detail: ev.detail));
   }
 
-  /// 等待串行队列清空（测试用：确保全部落盘完成）。
-  Future<void> waitPipelineIdle() => _queue.waitIdle();
+  /// 小说引擎原始事件流（阅读器自动刷新订阅用）。
+  Stream<PipelineEvent> get novelEvents =>
+      _novelEngine?.events ?? const Stream.empty();
+
+  /// 单章重批（处理页按钮；调度器运行中拒绝）。
+  Future<void> reannotateChapter(int projectId, int chapterIdx) async {
+    final e = await novelEngine();
+    if (e.isBusy(projectId)) {
+      throw Exception('管线运行中，请先停止再重批单章');
+    }
+    final pass = NovelAnnotatePass(
+        db: ref.read(databaseProvider), llm: ref.read(llmServiceProvider));
+    await pass.reannotateChapter(projectId, chapterIdx);
+    _onEvent(PipelineEvent(
+        projectId: projectId,
+        stage: 'novel',
+        status: ProjectStatus.imported,
+        detail: '已重批第 $chapterIdx 章'));
+  }
+
+  /// 入队串行推进管线；小说绕过队列直接挂调度器（§6.2：两遍式批注随到随
+  /// 落库，不被长视频阻塞，也不阻塞视频车道）。
+  void _startRun(String type, int projectId) {
+    if (type == 'novel') {
+      unawaited(_startNovel(projectId));
+      return;
+    }
+    _queue.add(projectId, () async => (await engine()).run(projectId));
+  }
+
+  final Set<Future<void>> _novelRuns = {};
+
+  Future<void> _startNovel(int projectId) async {
+    final e = await novelEngine();
+    final run = e.run(projectId);
+    _novelRuns.add(run);
+    try {
+      await run;
+    } finally {
+      _novelRuns.remove(run);
+    }
+  }
+
+  /// 等待串行队列清空（测试用：确保全部落盘完成）。小说绕过队列后，
+  /// 在途的小说运行也一并等待（保持导入后"全部落盘再断言"的语义）。
+  Future<void> waitPipelineIdle() async {
+    await _queue.waitIdle();
+    while (_novelRuns.isNotEmpty) {
+      await Future.wait(_novelRuns.toList());
+    }
+  }
 
   Future<void> _resumeAll() async {
     final db = ref.read(databaseProvider);
