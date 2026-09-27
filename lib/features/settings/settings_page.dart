@@ -8,13 +8,15 @@ import 'package:peixi/core/oss/oss_client.dart';
 import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/core/theme/theme_controller.dart';
+import 'package:peixi/features/settings/llm_channels_section.dart';
 import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/ui/widgets/page_header.dart';
 import 'package:peixi/ui/widgets/section_card.dart';
 import 'package:peixi/providers.dart';
 
-/// 设置页（设计稿 8.6 的 M1 子集）：外观（主题模式）、LLM API、OSS、
-/// ASR 模式、播放偏好，按 SectionCard 分组；播放偏好开关即时落库。
+/// 设置页（设计稿 8.6 的 M1 子集）：外观（主题模式）、模型渠道/功能槽位/
+/// 并发频控、用量与预算、OSS、ASR 模式、播放偏好，按 SectionCard 分组；
+/// 播放偏好开关即时落库。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -23,20 +25,13 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
-  final _baseUrl = TextEditingController();
-  final _apiKey = TextEditingController();
-  final _modelCheap = TextEditingController();
-  final _modelStandard = TextEditingController();
-  final _modelVision = TextEditingController();
   final _ossBucket = TextEditingController();
   final _ossEndpoint = TextEditingController();
   final _ossAk = TextEditingController();
   final _ossSk = TextEditingController();
   final _budget = TextEditingController();
-  String _preset = '阿里云百炼';
   int _totalTokens = 0;
   int _monthTokens = 0;
-  bool _testing = false;
   bool _testingOss = false;
   bool _loaded = false;
   AsrMode _asrMode = AsrMode.cloud;
@@ -51,14 +46,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _init() async {
     final repo = ref.read(settingsRepoProvider);
-    final cfg = await repo.loadApiConfig();
-    if (!mounted) return;
-    _baseUrl.text = cfg.baseUrl;
-    _apiKey.text = cfg.apiKey;
-    _modelCheap.text = cfg.modelCheap;
-    _modelStandard.text = cfg.modelStandard;
-    _modelVision.text = cfg.modelVision;
-    _preset = cfg.baseUrl == ApiConfig.bailianBaseUrl ? '阿里云百炼' : '自定义';
     final oss = await repo.loadOssConfig();
     if (oss != null) {
       _ossBucket.text = oss.bucket;
@@ -223,11 +210,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   void dispose() {
     _listScroll.dispose();
     for (final c in [
-      _baseUrl,
-      _apiKey,
-      _modelCheap,
-      _modelStandard,
-      _modelVision,
       _ossBucket,
       _ossEndpoint,
       _ossAk,
@@ -286,75 +268,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         ),
                       ),
                       const SizedBox(height: Space.l),
+                      const LlmChannelsSection(),
+                      const SizedBox(height: Space.l),
                       SectionCard(
-                        leading: Icons.auto_awesome_outlined,
-                        title: 'LLM API',
-                        subtitle: '解说、批注与知识卡由大模型生成',
+                        leading: Icons.savings_outlined,
+                        title: '用量与预算',
+                        subtitle: '统计与月度预算对全部渠道生效',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            DropdownButtonFormField<String>(
-                              initialValue: _preset,
-                              decoration:
-                                  const InputDecoration(labelText: '供应商预设'),
-                              items: const [
-                                DropdownMenuItem(
-                                    value: '阿里云百炼',
-                                    child: Text('阿里云百炼（推荐）')),
-                                DropdownMenuItem(
-                                    value: '自定义', child: Text('自定义')),
-                              ],
-                              onChanged: (v) => setState(() {
-                                _preset = v!;
-                                if (v == '阿里云百炼') {
-                                  _baseUrl.text = ApiConfig.bailianBaseUrl;
-                                }
-                              }),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _baseUrl,
-                              enabled: _preset == '自定义',
-                              decoration: InputDecoration(
-                                labelText: 'Base URL',
-                                helperText:
-                                    _preset == '自定义' ? null : '由供应商预设提供',
-                              ),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _apiKey,
-                              obscureText: true,
-                              decoration: const InputDecoration(
-                                labelText: 'API Key',
-                                hintText: '百炼控制台 → API-KEY 创建',
-                              ),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _modelCheap,
-                              decoration: const InputDecoration(
-                                labelText: '轻量模型（映射/摘要/人物）',
-                                suffixText: 'cheap',
-                              ),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _modelStandard,
-                              decoration: const InputDecoration(
-                                labelText: '主力模型（解说/批注/知识卡）',
-                                suffixText: 'standard',
-                              ),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _modelVision,
-                              decoration: const InputDecoration(
-                                labelText: '视觉模型（实验性校准辅助）',
-                                suffixText: 'vision',
-                              ),
-                            ),
-                            const SizedBox(height: Space.m),
                             TextFormField(
                               controller: _budget,
                               keyboardType: TextInputType.number,
@@ -364,30 +286,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               ),
                             ),
                             const SizedBox(height: Space.l),
-                            Row(children: [
-                              FilledButton.icon(
-                                onPressed:
-                                    _testing ? null : _testConnection,
-                                icon: _testing
-                                    ? const SizedBox(
-                                        width: 15,
-                                        height: 15,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2))
-                                    : const Icon(Icons.wifi_tethering,
-                                        size: 17),
-                                label:
-                                    Text(_testing ? '测试中…' : '测试连接'),
-                              ),
-                              const Spacer(),
-                              TextButton.icon(
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
                                 onPressed: _clearLlmStats,
                                 icon: const Icon(
                                     Icons.delete_sweep_outlined,
                                     size: 16),
                                 label: const Text('清空统计与缓存'),
                               ),
-                            ]),
+                            ),
                             const SizedBox(height: Space.m),
                             Text(
                                 '累计 LLM 消耗：$_totalTokens tokens'
@@ -575,31 +483,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  Future<void> _testConnection() async {
-    setState(() => _testing = true);
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      // 用表单当前值临时构造配置测试，未保存也能测
-      ref
-          .read(llmServiceProvider)
-          .updateConfig(
-            ApiConfig(
-              baseUrl: _baseUrl.text.trim(),
-              apiKey: _apiKey.text.trim(),
-              modelCheap: _modelCheap.text.trim(),
-              modelStandard: _modelStandard.text.trim(),
-              modelVision: _modelVision.text.trim(),
-            ),
-          );
-      final msg = await ref.read(llmServiceProvider).testConnection();
-      messenger.showSnackBar(SnackBar(content: Text('✅ $msg')));
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('❌ $e')));
-    } finally {
-      if (mounted) setState(() => _testing = false);
-    }
-  }
-
   /// OSS 连通性测试：PUT 一个小测试对象再删除（用表单当前值，未保存也能测）。
   Future<void> _testOss() async {
     setState(() => _testingOss = true);
@@ -659,15 +542,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _save() async {
     final repo = ref.read(settingsRepoProvider);
-    await repo.saveApiConfig(
-      ApiConfig(
-        baseUrl: _baseUrl.text.trim(),
-        apiKey: _apiKey.text.trim(),
-        modelCheap: _modelCheap.text.trim(),
-        modelStandard: _modelStandard.text.trim(),
-        modelVision: _modelVision.text.trim(),
-      ),
-    );
     await repo.saveOssConfig(
       OssConfig(
         bucket: _ossBucket.text.trim(),
@@ -677,7 +551,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ),
     );
     await repo.saveLlmBudgetTokens(int.tryParse(_budget.text.trim()) ?? 0);
-    ref.read(llmServiceProvider).updateConfig(await repo.loadApiConfig());
     if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已保存')));
