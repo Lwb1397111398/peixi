@@ -358,11 +358,17 @@ class LlmService {
 
   /// 拉取渠道模型列表（设置页「测试连接/抓取模型」共用）。
   Future<List<String>> fetchModels(ChannelRoute channel) async {
-    final resp = await dio.get('${channel.baseUrl}/models',
-        options: Options(
-          validateStatus: (_) => true,
-          headers: {'Authorization': 'Bearer ${channel.apiKey}'},
-        ));
+    final Response resp;
+    try {
+      resp = await dio.get('${channel.baseUrl}/models',
+          options: Options(
+            validateStatus: (_) => true,
+            headers: {'Authorization': 'Bearer ${channel.apiKey}'},
+          ));
+    } on DioException catch (e) {
+      // 归一为 LlmException：调用方（设置页）按 LlmException 呈现失败提示
+      throw LlmException('网络错误: ${e.message}');
+    }
     if (resp.statusCode != 200) {
       throw LlmException('HTTP ${resp.statusCode}', statusCode: resp.statusCode);
     }

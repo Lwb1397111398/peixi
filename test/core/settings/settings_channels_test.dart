@@ -77,6 +77,15 @@ void main() {
     expect(r.slots, isEmpty);
   });
 
+  test('并发 loadRouting：迁移共享同一 Future，首启不重复建默认渠道', () async {
+    await seedLegacyConfig();
+    // 模拟首启竞态：providers 启动臂与设置页 initState 同时 loadRouting
+    await Future.wait([repo.loadRouting(), repo.loadRouting()]);
+    expect((await repo.loadChannels()).length, 1);
+    final r = await repo.loadRouting();
+    expect(r.channels.single.baseUrl, 'https://old/v1');
+  });
+
   test('迁移后经渠道 API 编辑：同步落库，重启不回退', () async {
     await seedLegacyConfig();
     await repo.loadRouting(); // 触发一次性迁移（此后旗标已置位）

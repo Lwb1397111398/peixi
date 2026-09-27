@@ -20,28 +20,24 @@ class FakeLlmService extends LlmService {
 
 void main() {
   late AppDatabase db;
+  late SettingsRepository repo;
   setUp(() {
     FlutterSecureStorage.setMockInitialValues({});
     db = AppDatabase(NativeDatabase.memory());
+    repo = SettingsRepository(db, const FlutterSecureStorage());
   });
   tearDown(() async => db.close());
 
   Widget wrap(Widget child) => ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(db),
-          settingsRepoProvider.overrideWithValue(
-              SettingsRepository(db, const FlutterSecureStorage())),
+          settingsRepoProvider.overrideWithValue(repo),
           llmServiceProvider.overrideWithValue(FakeLlmService(db: db)),
         ],
         child: MaterialApp(home: Scaffold(body: child)),
       );
 
   Widget section() => const SingleChildScrollView(child: LlmChannelsSection());
-
-  Future<SettingsRepository> seededRepo() async {
-    final repo = SettingsRepository(db, const FlutterSecureStorage());
-    return repo;
-  }
 
   /// SnackBar 自动收起依赖定时器：推进假时钟并等退场动画结束。
   Future<void> dismissSnackBar(WidgetTester tester) async {
@@ -70,7 +66,6 @@ void main() {
   });
 
   testWidgets('编辑渠道：对话框预填，改名保存后列表刷新', (tester) async {
-    final repo = await seededRepo();
     await repo.addChannel(name: '旧站', baseUrl: 'https://old/v1', apiKey: 'sk-old');
     await tester.pumpWidget(wrap(section()));
     await tester.pumpAndSettle();
@@ -87,7 +82,6 @@ void main() {
   });
 
   testWidgets('功能槽位：四个槽位标签渲染；已绑定未拉模型时弹层提示先拉模型', (tester) async {
-    final repo = await seededRepo();
     final id =
         await repo.addChannel(name: '测试站', baseUrl: 'https://t/v1', apiKey: 'sk-t');
     await repo.saveSlot(LlmSlot.analysis, channelId: id, model: 'deepseek-v3');
@@ -118,7 +112,6 @@ void main() {
   });
 
   testWidgets('删除渠道：确认对话框后落库并回到空态', (tester) async {
-    final repo = await seededRepo();
     final id =
         await repo.addChannel(name: '待删站', baseUrl: 'https://d/v1', apiKey: 'sk-d');
     await tester.pumpWidget(wrap(section()));
@@ -136,7 +129,6 @@ void main() {
   });
 
   testWidgets('新增渠道后可通过 UI 创建槽位绑定：选渠道→模型弹层选模型→落库', (tester) async {
-    final repo = await seededRepo();
     final cid =
         await repo.addChannel(name: '新站', baseUrl: 'https://n/v1', apiKey: 'sk-n');
     await tester.pumpWidget(wrap(section()));
@@ -168,7 +160,6 @@ void main() {
   });
 
   testWidgets('已绑定槽位切换渠道后选模型：保存新渠道 id 而非旧渠道', (tester) async {
-    final repo = await seededRepo();
     final idA =
         await repo.addChannel(name: '甲站', baseUrl: 'https://a/v1', apiKey: 'sk-a');
     await repo.saveSlot(LlmSlot.analysis, channelId: idA, model: 'm-a');
@@ -204,7 +195,6 @@ void main() {
   });
 
   testWidgets('渠道对话框校验：空字段报错不关闭；BASE_URL 非 http(s) 拦截；填写完整后保存', (tester) async {
-    final repo = await seededRepo();
     await tester.pumpWidget(wrap(section()));
     await tester.pumpAndSettle();
 

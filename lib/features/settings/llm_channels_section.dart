@@ -37,23 +37,25 @@ class _LlmChannelsSectionState extends ConsumerState<LlmChannelsSection> {
     _reload();
   }
 
+  /// 统一从路由表提取渠道/槽位到 state（_reload 与 _persistAndRefresh 共用）。
+  /// conc/minMs 仅 _reload 需要（_persistAndRefresh 不动并发/频控设置）。
+  void _applyState(RoutingTable routing, {int? conc, int? minMs}) {
+    _channels = routing.channels;
+    for (final s in LlmSlot.values) {
+      final b = routing.slots[s];
+      _slots[s] = b == null ? null : (channelId: b.channelId, model: b.model);
+    }
+    if (conc != null) _concurrency = conc;
+    if (minMs != null) _minIntervalMs = minMs;
+  }
+
   Future<void> _reload() async {
     final repo = ref.read(settingsRepoProvider);
     final routing = await repo.loadRouting();
     final (conc, minMs) = await repo.loadLlmLimits();
     if (!mounted) return;
     setState(() {
-      _channels = routing.channels;
-      for (final s in LlmSlot.values) {
-        _slots[s] = routing.slots[s] == null
-            ? null
-            : (
-                channelId: routing.slots[s]!.channelId,
-                model: routing.slots[s]!.model
-              );
-      }
-      _concurrency = conc;
-      _minIntervalMs = minMs;
+      _applyState(routing, conc: conc, minMs: minMs);
       _loaded = true;
     });
   }
@@ -91,17 +93,7 @@ class _LlmChannelsSectionState extends ConsumerState<LlmChannelsSection> {
     final routing = await ref.read(settingsRepoProvider).loadRouting();
     if (!mounted) return;
     ref.read(llmServiceProvider).updateRouting(routing);
-    setState(() {
-      _channels = routing.channels;
-      for (final s in LlmSlot.values) {
-        _slots[s] = routing.slots[s] == null
-            ? null
-            : (
-                channelId: routing.slots[s]!.channelId,
-                model: routing.slots[s]!.model
-              );
-      }
-    });
+    setState(() => _applyState(routing));
   }
 
   Future<void> _saveLimits() async {

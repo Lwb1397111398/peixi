@@ -225,7 +225,7 @@ class SettingsRepository {
   /// 组装路由表。首次调用时把旧单配置（llm.base_url/api_key/三模型）迁移为
   /// "默认渠道 + 三槽位"；从未配置过则返回空表。
   Future<RoutingTable> loadRouting() async {
-    await _migrateLegacyConfigIfNeeded();
+    await _ensureLegacyMigrated();
     final channels = <ChannelRoute>[];
     for (final row in await loadChannels()) {
       final key = await _secure.read(key: _channelKey(row.id)) ?? '';
@@ -244,6 +244,29 @@ class SettingsRepository {
       }
     }
     return RoutingTable(channels: channels, slots: slots);
+  }
+
+  /// 迁移在途去重：repo 为应用级单例，首启时 providers 启动臂与设置页
+  /// initState / 管线预检可能并发进入 loadRouting，而迁移是"读旗标 →
+  /// 建渠道 → 置旗标"的 check-then-act，各 await 之间存在竞态窗口，
+  /// 双双通过旗标检查会建出重复的"默认渠道"。以实例级共享 Future 去重。
+  Future<void>? _migrationFuture;
+
+  Future<void> _ensureLegacyMigrated() async {
+    final inFlight = _migrationFuture;
+    if (inFlight != null) {
+      await inFlight;
+      return;
+    }
+    final f = _migrateLegacyConfigIfNeeded();
+    _migrationFuture = f;
+    try {
+      await f;
+    } catch (_) {
+      // 失败不缓存：置空以便下次调用重试（成功则永久短路，旗标幂等兜底）。
+      if (identical(_migrationFuture, f)) _migrationFuture = null;
+      rethrow;
+    }
   }
 
   Future<void> _migrateLegacyConfigIfNeeded() async {
