@@ -1,5 +1,5 @@
 import 'package:drift/drift.dart';
-import 'package:peixi/features/pipeline/novel_backfill.dart';
+import 'package:peixi/core/database/novel_backfill.dart';
 
 part 'app_database.g.dart';
 
@@ -250,12 +250,6 @@ class AppDatabase extends _$AppDatabase {
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onUpgrade: (m, from, to) async {
-          if (from < 2) {
-            // v1→v2：为按项目/章节/段落/场景等外键式查询补齐索引（v1 为全表扫描）
-            for (final index in allSchemaEntities.whereType<Index>()) {
-              await m.createIndex(index);
-            }
-          }
           if (from < 3) {
             // v2→v3：SRS 调度列 + LLM 响应缓存表（列带默认值，旧行自动填充）
             await m.addColumn(knowledgeCards, knowledgeCards.dueAt);
@@ -271,15 +265,32 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(llmChannels);
           }
           if (from < 5) {
-            // v4→v5：两遍式管线的章级断点列 + 人物事件线 + 语义回忆索引（设计文档 §5）
-            await m.addColumn(chapters, chapters.mapDone);
-            await m.addColumn(chapters, chapters.annotDone);
-            await m.addColumn(chapters, chapters.castIds);
-            await m.addColumn(chapters, chapters.digestBefore);
-            await m.addColumn(characters, characters.major);
-            await m.createTable(characterEvents);
-            await m.createTable(chapterEmbeddings);
-            await backfillNovelV5(this);
+            // v4→v5：两遍式管线的章级断点列 + 人物事件线 + 语义回忆索引（设计文档 §5）。
+            // 整体包事务：drift 的 onUpgrade 不在事务中运行（user_version 要等
+            // 全部迁移成功后才写入），而回填是逐章 UPDATE（几千章=数千条语句），
+            // 中途被杀后重跑会撞 duplicate column，库永久打不开。SQLite DDL 是
+            // 事务性的：失败整体回滚、重跑干净。
+            await transaction(() async {
+              await m.addColumn(chapters, chapters.mapDone);
+              await m.addColumn(chapters, chapters.annotDone);
+              await m.addColumn(chapters, chapters.castIds);
+              await m.addColumn(chapters, chapters.digestBefore);
+              await m.addColumn(characters, characters.major);
+              await m.createTable(characterEvents);
+              await m.createTable(chapterEmbeddings);
+              await backfillNovelV5(this);
+            });
+          }
+          if (from < 2) {
+            // v1→v2：为按项目/章节/段落/场景等外键式查询补齐索引（v1 为全表扫描）。
+            // 必须放在全部建表/加列/回填之后：v5 新索引 idx_character_events_*
+            // 指向的 character_events 在上面的 from<5 块才创建，drift 的
+            // createIndex 是裸 CREATE INDEX，提前执行会让真实 v1 库升级报
+            // no such table 而打不开；且 m.createTable 不会创建 @TableIndex
+            // 注解索引，此循环正好补上 v5 新表的索引。
+            for (final index in allSchemaEntities.whereType<Index>()) {
+              await m.createIndex(index);
+            }
           }
         },
         beforeOpen: (details) async {

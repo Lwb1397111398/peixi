@@ -63,6 +63,24 @@ void main() {
     expect(loaded.vectorRecall, isTrue);
   });
 
+  test('saveNovelParams 写入侧钳制越界值（mapBatch 99→10、mapLead 0→1）', () async {
+    const p = NovelParams(
+        mapBatchChapters: 99,
+        digestBatchChapters: 51,
+        annotateBatchChapters: 0,
+        initialBurstChapters: -1,
+        mapLeadChapters: 0,
+        vectorRecall: true);
+    await repo.saveNovelParams(p);
+    final loaded = await repo.loadNovelParams();
+    expect(loaded.mapBatchChapters, 10, reason: '写入侧钳到上限 10');
+    expect(loaded.digestBatchChapters, 50, reason: '写入侧钳到上限 50');
+    expect(loaded.annotateBatchChapters, 1, reason: '写入侧钳到下限 1');
+    expect(loaded.initialBurstChapters, 1, reason: '写入侧钳到下限 1');
+    expect(loaded.mapLeadChapters, 1, reason: 'mapLead 为 0 会让地图/批注双泳道互等死锁');
+    expect(loaded.vectorRecall, isTrue, reason: '布尔开关不参与钳制');
+  });
+
   test('非整数值按默认值处理，不抛异常', () async {
     await putRaw('novel.mapBatchChapters', 'abc');
     final p = await repo.loadNovelParams();
