@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:peixi/features/pipeline/novel_backfill.dart';
 
 part 'app_database.g.dart';
 
@@ -30,6 +31,9 @@ class Characters extends Table {
   RealColumn get confidence => real().nullable()();
   TextColumn get source => text().withDefault(const Constant('auto'))(); // auto|manual
   TextColumn get color => text().nullable()();
+
+  /// v5：主要人物标记（地图趟维护；名单进 prompt 按 major + 近期活跃过滤，防膨胀）
+  BoolColumn get major => boolean().withDefault(const Constant(false))();
 }
 
 @TableIndex(name: 'idx_segments_project', columns: {#projectId})
@@ -125,6 +129,12 @@ class Chapters extends Table {
   IntColumn get startPara => integer()();
   IntColumn get endPara => integer()();
   TextColumn get summary => text().nullable()();
+
+  // v5：两遍式管线的章级断点列（设计文档 §5，崩溃续跑与调度器衔接全靠它们）
+  BoolColumn get mapDone => boolean().withDefault(const Constant(false))();
+  BoolColumn get annotDone => boolean().withDefault(const Constant(false))();
+  TextColumn get castIds => text().withDefault(const Constant('[]'))(); // JSON List<int>
+  TextColumn get digestBefore => text().nullable()(); // 该章开读时的"故事至今"快照
 }
 
 @TableIndex(name: 'idx_paragraphs_project', columns: {#projectId})
@@ -145,6 +155,34 @@ class Annotations extends Table {
       integer().references(Paragraphs, #id, onDelete: KeyAction.cascade)();
   TextColumn get type => text()(); // L1|L2|L3|L4
   TextColumn get contentJson => text()();
+}
+
+/// v5：人物关键事件时间线（批注趟"前文呼应"的召回源，设计文档 §5）
+@TableIndex(name: 'idx_character_events_project', columns: {#projectId})
+@TableIndex(name: 'idx_character_events_character', columns: {#characterId})
+class CharacterEvents extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get projectId =>
+      integer().references(Projects, #id, onDelete: KeyAction.cascade)();
+  IntColumn get characterId =>
+      integer().references(Characters, #id, onDelete: KeyAction.cascade)();
+  IntColumn get chapterIdx => integer()();
+  TextColumn get event => text()();
+}
+
+/// v5：语义回忆索引（章摘要向量，cos 相似度在 Dart 侧计算；可选层，默认关）
+class ChapterEmbeddings extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get projectId =>
+      integer().references(Projects, #id, onDelete: KeyAction.cascade)();
+  IntColumn get chapterId =>
+      integer().references(Chapters, #id, onDelete: KeyAction.cascade)();
+  IntColumn get dim => integer()();
+  TextColumn get vectorJson => text()(); // JSON List<double>
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {chapterId}
+      ];
 }
 
 class Settings extends Table {
@@ -196,6 +234,8 @@ class LlmChannels extends Table {
   Chapters,
   Paragraphs,
   Annotations,
+  CharacterEvents,
+  ChapterEmbeddings,
   Settings,
   LlmLogs,
   LlmCache,
@@ -205,7 +245,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -229,6 +269,17 @@ class AppDatabase extends _$AppDatabase {
           if (from < 4) {
             // v3→v4：LLM 渠道表（渠道化模型管理，api_key 在 secure storage）
             await m.createTable(llmChannels);
+          }
+          if (from < 5) {
+            // v4→v5：两遍式管线的章级断点列 + 人物事件线 + 语义回忆索引（设计文档 §5）
+            await m.addColumn(chapters, chapters.mapDone);
+            await m.addColumn(chapters, chapters.annotDone);
+            await m.addColumn(chapters, chapters.castIds);
+            await m.addColumn(chapters, chapters.digestBefore);
+            await m.addColumn(characters, characters.major);
+            await m.createTable(characterEvents);
+            await m.createTable(chapterEmbeddings);
+            await backfillNovelV5(this);
           }
         },
         beforeOpen: (details) async {

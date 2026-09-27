@@ -9,7 +9,13 @@ import 'package:peixi/features/pipeline/project_status.dart';
 /// 便于删除逻辑等共用代码读取；novel 专属字段为计数与批注进度）。
 class NovelMeta {
   NovelMeta(
-      {this.sourceFilename, this.paraCount = 0, this.charCount = 0, this.digest, this.annotatedPara = -1});
+      {this.sourceFilename,
+      this.paraCount = 0,
+      this.charCount = 0,
+      this.digest,
+      this.annotatedPara = -1,
+      this.chapterCount = 0,
+      this.annotatedChapters = 0});
 
   String? sourceFilename;
   int paraCount;
@@ -18,9 +24,15 @@ class NovelMeta {
   /// N3 滚动前情摘要（Prompt E 产物，≤300 字，跨 run 保持）
   String? digest;
 
-  /// N3 断点凭据：已批注完成的最大段落全局 idx（-1 = 未开始）。
-  /// 每块批注与该值在同一事务落库，崩溃后按它续跑。
+  /// N3 断点凭据：已批注完成的最大段落全局 idx。
+  /// （v5 起两遍式管线改用 chapters.annot_done 按章断点，本字段保留不再使用。）
   int annotatedPara;
+
+  /// v5：总章数（导入时回填；UI 徽章/进度用）
+  int chapterCount;
+
+  /// v5：已完成批注的章数（调度器进度徽章 denormalized 到 meta）
+  int annotatedChapters;
 
   Map<String, dynamic> toJson() => {
         if (sourceFilename != null) 'sourceFilename': sourceFilename,
@@ -28,6 +40,8 @@ class NovelMeta {
         'charCount': charCount,
         if (digest != null) 'digest': digest,
         'annotatedPara': annotatedPara,
+        'chapterCount': chapterCount,
+        'annotatedChapters': annotatedChapters,
       };
 
   String encode() => jsonEncode(toJson());
@@ -46,6 +60,8 @@ class NovelMeta {
       charCount: (j['charCount'] as num?)?.toInt() ?? 0,
       digest: j['digest'] as String?,
       annotatedPara: (j['annotatedPara'] as num?)?.toInt() ?? -1,
+      chapterCount: (j['chapterCount'] as num?)?.toInt() ?? 0,
+      annotatedChapters: (j['annotatedChapters'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -68,7 +84,8 @@ class NovelImporter {
       final meta = NovelMeta(
           sourceFilename: sourcePath.split('/').last.split('\\').last,
           paraCount: doc.paragraphCount,
-          charCount: doc.charCount);
+          charCount: doc.charCount,
+          chapterCount: doc.chapters.length);
       final projectId =
           await db.into(db.projects).insert(ProjectsCompanion.insert(
                 type: 'novel',

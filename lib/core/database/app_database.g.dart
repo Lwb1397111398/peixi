@@ -646,6 +646,19 @@ class $CharactersTable extends Characters
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _majorMeta = const VerificationMeta('major');
+  @override
+  late final GeneratedColumn<bool> major = GeneratedColumn<bool>(
+    'major',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("major" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -656,6 +669,7 @@ class $CharactersTable extends Characters
     confidence,
     source,
     color,
+    major,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -721,6 +735,12 @@ class $CharactersTable extends Characters
         color.isAcceptableOrUnknown(data['color']!, _colorMeta),
       );
     }
+    if (data.containsKey('major')) {
+      context.handle(
+        _majorMeta,
+        major.isAcceptableOrUnknown(data['major']!, _majorMeta),
+      );
+    }
     return context;
   }
 
@@ -762,6 +782,10 @@ class $CharactersTable extends Characters
         DriftSqlType.string,
         data['${effectivePrefix}color'],
       ),
+      major: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}major'],
+      )!,
     );
   }
 
@@ -780,6 +804,9 @@ class Character extends DataClass implements Insertable<Character> {
   final double? confidence;
   final String source;
   final String? color;
+
+  /// v5：主要人物标记（地图趟维护；名单进 prompt 按 major + 近期活跃过滤，防膨胀）
+  final bool major;
   const Character({
     required this.id,
     required this.projectId,
@@ -789,6 +816,7 @@ class Character extends DataClass implements Insertable<Character> {
     this.confidence,
     required this.source,
     this.color,
+    required this.major,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -807,6 +835,7 @@ class Character extends DataClass implements Insertable<Character> {
     if (!nullToAbsent || color != null) {
       map['color'] = Variable<String>(color);
     }
+    map['major'] = Variable<bool>(major);
     return map;
   }
 
@@ -826,6 +855,7 @@ class Character extends DataClass implements Insertable<Character> {
       color: color == null && nullToAbsent
           ? const Value.absent()
           : Value(color),
+      major: Value(major),
     );
   }
 
@@ -843,6 +873,7 @@ class Character extends DataClass implements Insertable<Character> {
       confidence: serializer.fromJson<double?>(json['confidence']),
       source: serializer.fromJson<String>(json['source']),
       color: serializer.fromJson<String?>(json['color']),
+      major: serializer.fromJson<bool>(json['major']),
     );
   }
   @override
@@ -857,6 +888,7 @@ class Character extends DataClass implements Insertable<Character> {
       'confidence': serializer.toJson<double?>(confidence),
       'source': serializer.toJson<String>(source),
       'color': serializer.toJson<String?>(color),
+      'major': serializer.toJson<bool>(major),
     };
   }
 
@@ -869,6 +901,7 @@ class Character extends DataClass implements Insertable<Character> {
     Value<double?> confidence = const Value.absent(),
     String? source,
     Value<String?> color = const Value.absent(),
+    bool? major,
   }) => Character(
     id: id ?? this.id,
     projectId: projectId ?? this.projectId,
@@ -878,6 +911,7 @@ class Character extends DataClass implements Insertable<Character> {
     confidence: confidence.present ? confidence.value : this.confidence,
     source: source ?? this.source,
     color: color.present ? color.value : this.color,
+    major: major ?? this.major,
   );
   Character copyWithCompanion(CharactersCompanion data) {
     return Character(
@@ -895,6 +929,7 @@ class Character extends DataClass implements Insertable<Character> {
           : this.confidence,
       source: data.source.present ? data.source.value : this.source,
       color: data.color.present ? data.color.value : this.color,
+      major: data.major.present ? data.major.value : this.major,
     );
   }
 
@@ -908,7 +943,8 @@ class Character extends DataClass implements Insertable<Character> {
           ..write('speakerKey: $speakerKey, ')
           ..write('confidence: $confidence, ')
           ..write('source: $source, ')
-          ..write('color: $color')
+          ..write('color: $color, ')
+          ..write('major: $major')
           ..write(')'))
         .toString();
   }
@@ -923,6 +959,7 @@ class Character extends DataClass implements Insertable<Character> {
     confidence,
     source,
     color,
+    major,
   );
   @override
   bool operator ==(Object other) =>
@@ -935,7 +972,8 @@ class Character extends DataClass implements Insertable<Character> {
           other.speakerKey == this.speakerKey &&
           other.confidence == this.confidence &&
           other.source == this.source &&
-          other.color == this.color);
+          other.color == this.color &&
+          other.major == this.major);
 }
 
 class CharactersCompanion extends UpdateCompanion<Character> {
@@ -947,6 +985,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
   final Value<double?> confidence;
   final Value<String> source;
   final Value<String?> color;
+  final Value<bool> major;
   const CharactersCompanion({
     this.id = const Value.absent(),
     this.projectId = const Value.absent(),
@@ -956,6 +995,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     this.confidence = const Value.absent(),
     this.source = const Value.absent(),
     this.color = const Value.absent(),
+    this.major = const Value.absent(),
   });
   CharactersCompanion.insert({
     this.id = const Value.absent(),
@@ -966,6 +1006,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     this.confidence = const Value.absent(),
     this.source = const Value.absent(),
     this.color = const Value.absent(),
+    this.major = const Value.absent(),
   }) : projectId = Value(projectId),
        name = Value(name);
   static Insertable<Character> custom({
@@ -977,6 +1018,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     Expression<double>? confidence,
     Expression<String>? source,
     Expression<String>? color,
+    Expression<bool>? major,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -987,6 +1029,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
       if (confidence != null) 'confidence': confidence,
       if (source != null) 'source': source,
       if (color != null) 'color': color,
+      if (major != null) 'major': major,
     });
   }
 
@@ -999,6 +1042,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     Value<double?>? confidence,
     Value<String>? source,
     Value<String?>? color,
+    Value<bool>? major,
   }) {
     return CharactersCompanion(
       id: id ?? this.id,
@@ -1009,6 +1053,7 @@ class CharactersCompanion extends UpdateCompanion<Character> {
       confidence: confidence ?? this.confidence,
       source: source ?? this.source,
       color: color ?? this.color,
+      major: major ?? this.major,
     );
   }
 
@@ -1039,6 +1084,9 @@ class CharactersCompanion extends UpdateCompanion<Character> {
     if (color.present) {
       map['color'] = Variable<String>(color.value);
     }
+    if (major.present) {
+      map['major'] = Variable<bool>(major.value);
+    }
     return map;
   }
 
@@ -1052,7 +1100,8 @@ class CharactersCompanion extends UpdateCompanion<Character> {
           ..write('speakerKey: $speakerKey, ')
           ..write('confidence: $confidence, ')
           ..write('source: $source, ')
-          ..write('color: $color')
+          ..write('color: $color, ')
+          ..write('major: $major')
           ..write(')'))
         .toString();
   }
@@ -3967,6 +4016,59 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _mapDoneMeta = const VerificationMeta(
+    'mapDone',
+  );
+  @override
+  late final GeneratedColumn<bool> mapDone = GeneratedColumn<bool>(
+    'map_done',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("map_done" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _annotDoneMeta = const VerificationMeta(
+    'annotDone',
+  );
+  @override
+  late final GeneratedColumn<bool> annotDone = GeneratedColumn<bool>(
+    'annot_done',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("annot_done" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _castIdsMeta = const VerificationMeta(
+    'castIds',
+  );
+  @override
+  late final GeneratedColumn<String> castIds = GeneratedColumn<String>(
+    'cast_ids',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _digestBeforeMeta = const VerificationMeta(
+    'digestBefore',
+  );
+  @override
+  late final GeneratedColumn<String> digestBefore = GeneratedColumn<String>(
+    'digest_before',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -3976,6 +4078,10 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
     startPara,
     endPara,
     summary,
+    mapDone,
+    annotDone,
+    castIds,
+    digestBefore,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -4036,6 +4142,33 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
         summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
       );
     }
+    if (data.containsKey('map_done')) {
+      context.handle(
+        _mapDoneMeta,
+        mapDone.isAcceptableOrUnknown(data['map_done']!, _mapDoneMeta),
+      );
+    }
+    if (data.containsKey('annot_done')) {
+      context.handle(
+        _annotDoneMeta,
+        annotDone.isAcceptableOrUnknown(data['annot_done']!, _annotDoneMeta),
+      );
+    }
+    if (data.containsKey('cast_ids')) {
+      context.handle(
+        _castIdsMeta,
+        castIds.isAcceptableOrUnknown(data['cast_ids']!, _castIdsMeta),
+      );
+    }
+    if (data.containsKey('digest_before')) {
+      context.handle(
+        _digestBeforeMeta,
+        digestBefore.isAcceptableOrUnknown(
+          data['digest_before']!,
+          _digestBeforeMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -4073,6 +4206,22 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
         DriftSqlType.string,
         data['${effectivePrefix}summary'],
       ),
+      mapDone: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}map_done'],
+      )!,
+      annotDone: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}annot_done'],
+      )!,
+      castIds: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cast_ids'],
+      )!,
+      digestBefore: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}digest_before'],
+      ),
     );
   }
 
@@ -4090,6 +4239,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
   final int startPara;
   final int endPara;
   final String? summary;
+  final bool mapDone;
+  final bool annotDone;
+  final String castIds;
+  final String? digestBefore;
   const Chapter({
     required this.id,
     required this.projectId,
@@ -4098,6 +4251,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     required this.startPara,
     required this.endPara,
     this.summary,
+    required this.mapDone,
+    required this.annotDone,
+    required this.castIds,
+    this.digestBefore,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -4112,6 +4269,12 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     map['end_para'] = Variable<int>(endPara);
     if (!nullToAbsent || summary != null) {
       map['summary'] = Variable<String>(summary);
+    }
+    map['map_done'] = Variable<bool>(mapDone);
+    map['annot_done'] = Variable<bool>(annotDone);
+    map['cast_ids'] = Variable<String>(castIds);
+    if (!nullToAbsent || digestBefore != null) {
+      map['digest_before'] = Variable<String>(digestBefore);
     }
     return map;
   }
@@ -4129,6 +4292,12 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       summary: summary == null && nullToAbsent
           ? const Value.absent()
           : Value(summary),
+      mapDone: Value(mapDone),
+      annotDone: Value(annotDone),
+      castIds: Value(castIds),
+      digestBefore: digestBefore == null && nullToAbsent
+          ? const Value.absent()
+          : Value(digestBefore),
     );
   }
 
@@ -4145,6 +4314,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       startPara: serializer.fromJson<int>(json['startPara']),
       endPara: serializer.fromJson<int>(json['endPara']),
       summary: serializer.fromJson<String?>(json['summary']),
+      mapDone: serializer.fromJson<bool>(json['mapDone']),
+      annotDone: serializer.fromJson<bool>(json['annotDone']),
+      castIds: serializer.fromJson<String>(json['castIds']),
+      digestBefore: serializer.fromJson<String?>(json['digestBefore']),
     );
   }
   @override
@@ -4158,6 +4331,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       'startPara': serializer.toJson<int>(startPara),
       'endPara': serializer.toJson<int>(endPara),
       'summary': serializer.toJson<String?>(summary),
+      'mapDone': serializer.toJson<bool>(mapDone),
+      'annotDone': serializer.toJson<bool>(annotDone),
+      'castIds': serializer.toJson<String>(castIds),
+      'digestBefore': serializer.toJson<String?>(digestBefore),
     };
   }
 
@@ -4169,6 +4346,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     int? startPara,
     int? endPara,
     Value<String?> summary = const Value.absent(),
+    bool? mapDone,
+    bool? annotDone,
+    String? castIds,
+    Value<String?> digestBefore = const Value.absent(),
   }) => Chapter(
     id: id ?? this.id,
     projectId: projectId ?? this.projectId,
@@ -4177,6 +4358,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     startPara: startPara ?? this.startPara,
     endPara: endPara ?? this.endPara,
     summary: summary.present ? summary.value : this.summary,
+    mapDone: mapDone ?? this.mapDone,
+    annotDone: annotDone ?? this.annotDone,
+    castIds: castIds ?? this.castIds,
+    digestBefore: digestBefore.present ? digestBefore.value : this.digestBefore,
   );
   Chapter copyWithCompanion(ChaptersCompanion data) {
     return Chapter(
@@ -4187,6 +4372,12 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       startPara: data.startPara.present ? data.startPara.value : this.startPara,
       endPara: data.endPara.present ? data.endPara.value : this.endPara,
       summary: data.summary.present ? data.summary.value : this.summary,
+      mapDone: data.mapDone.present ? data.mapDone.value : this.mapDone,
+      annotDone: data.annotDone.present ? data.annotDone.value : this.annotDone,
+      castIds: data.castIds.present ? data.castIds.value : this.castIds,
+      digestBefore: data.digestBefore.present
+          ? data.digestBefore.value
+          : this.digestBefore,
     );
   }
 
@@ -4199,14 +4390,29 @@ class Chapter extends DataClass implements Insertable<Chapter> {
           ..write('title: $title, ')
           ..write('startPara: $startPara, ')
           ..write('endPara: $endPara, ')
-          ..write('summary: $summary')
+          ..write('summary: $summary, ')
+          ..write('mapDone: $mapDone, ')
+          ..write('annotDone: $annotDone, ')
+          ..write('castIds: $castIds, ')
+          ..write('digestBefore: $digestBefore')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, projectId, idx, title, startPara, endPara, summary);
+  int get hashCode => Object.hash(
+    id,
+    projectId,
+    idx,
+    title,
+    startPara,
+    endPara,
+    summary,
+    mapDone,
+    annotDone,
+    castIds,
+    digestBefore,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4217,7 +4423,11 @@ class Chapter extends DataClass implements Insertable<Chapter> {
           other.title == this.title &&
           other.startPara == this.startPara &&
           other.endPara == this.endPara &&
-          other.summary == this.summary);
+          other.summary == this.summary &&
+          other.mapDone == this.mapDone &&
+          other.annotDone == this.annotDone &&
+          other.castIds == this.castIds &&
+          other.digestBefore == this.digestBefore);
 }
 
 class ChaptersCompanion extends UpdateCompanion<Chapter> {
@@ -4228,6 +4438,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
   final Value<int> startPara;
   final Value<int> endPara;
   final Value<String?> summary;
+  final Value<bool> mapDone;
+  final Value<bool> annotDone;
+  final Value<String> castIds;
+  final Value<String?> digestBefore;
   const ChaptersCompanion({
     this.id = const Value.absent(),
     this.projectId = const Value.absent(),
@@ -4236,6 +4450,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     this.startPara = const Value.absent(),
     this.endPara = const Value.absent(),
     this.summary = const Value.absent(),
+    this.mapDone = const Value.absent(),
+    this.annotDone = const Value.absent(),
+    this.castIds = const Value.absent(),
+    this.digestBefore = const Value.absent(),
   });
   ChaptersCompanion.insert({
     this.id = const Value.absent(),
@@ -4245,6 +4463,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     required int startPara,
     required int endPara,
     this.summary = const Value.absent(),
+    this.mapDone = const Value.absent(),
+    this.annotDone = const Value.absent(),
+    this.castIds = const Value.absent(),
+    this.digestBefore = const Value.absent(),
   }) : projectId = Value(projectId),
        idx = Value(idx),
        startPara = Value(startPara),
@@ -4257,6 +4479,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     Expression<int>? startPara,
     Expression<int>? endPara,
     Expression<String>? summary,
+    Expression<bool>? mapDone,
+    Expression<bool>? annotDone,
+    Expression<String>? castIds,
+    Expression<String>? digestBefore,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -4266,6 +4492,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
       if (startPara != null) 'start_para': startPara,
       if (endPara != null) 'end_para': endPara,
       if (summary != null) 'summary': summary,
+      if (mapDone != null) 'map_done': mapDone,
+      if (annotDone != null) 'annot_done': annotDone,
+      if (castIds != null) 'cast_ids': castIds,
+      if (digestBefore != null) 'digest_before': digestBefore,
     });
   }
 
@@ -4277,6 +4507,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     Value<int>? startPara,
     Value<int>? endPara,
     Value<String?>? summary,
+    Value<bool>? mapDone,
+    Value<bool>? annotDone,
+    Value<String>? castIds,
+    Value<String?>? digestBefore,
   }) {
     return ChaptersCompanion(
       id: id ?? this.id,
@@ -4286,6 +4520,10 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
       startPara: startPara ?? this.startPara,
       endPara: endPara ?? this.endPara,
       summary: summary ?? this.summary,
+      mapDone: mapDone ?? this.mapDone,
+      annotDone: annotDone ?? this.annotDone,
+      castIds: castIds ?? this.castIds,
+      digestBefore: digestBefore ?? this.digestBefore,
     );
   }
 
@@ -4313,6 +4551,18 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     if (summary.present) {
       map['summary'] = Variable<String>(summary.value);
     }
+    if (mapDone.present) {
+      map['map_done'] = Variable<bool>(mapDone.value);
+    }
+    if (annotDone.present) {
+      map['annot_done'] = Variable<bool>(annotDone.value);
+    }
+    if (castIds.present) {
+      map['cast_ids'] = Variable<String>(castIds.value);
+    }
+    if (digestBefore.present) {
+      map['digest_before'] = Variable<String>(digestBefore.value);
+    }
     return map;
   }
 
@@ -4325,7 +4575,11 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
           ..write('title: $title, ')
           ..write('startPara: $startPara, ')
           ..write('endPara: $endPara, ')
-          ..write('summary: $summary')
+          ..write('summary: $summary, ')
+          ..write('mapDone: $mapDone, ')
+          ..write('annotDone: $annotDone, ')
+          ..write('castIds: $castIds, ')
+          ..write('digestBefore: $digestBefore')
           ..write(')'))
         .toString();
   }
@@ -4984,6 +5238,733 @@ class AnnotationsCompanion extends UpdateCompanion<Annotation> {
           ..write('paraId: $paraId, ')
           ..write('type: $type, ')
           ..write('contentJson: $contentJson')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $CharacterEventsTable extends CharacterEvents
+    with TableInfo<$CharacterEventsTable, CharacterEvent> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CharacterEventsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _projectIdMeta = const VerificationMeta(
+    'projectId',
+  );
+  @override
+  late final GeneratedColumn<int> projectId = GeneratedColumn<int>(
+    'project_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES projects (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _characterIdMeta = const VerificationMeta(
+    'characterId',
+  );
+  @override
+  late final GeneratedColumn<int> characterId = GeneratedColumn<int>(
+    'character_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES characters (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _chapterIdxMeta = const VerificationMeta(
+    'chapterIdx',
+  );
+  @override
+  late final GeneratedColumn<int> chapterIdx = GeneratedColumn<int>(
+    'chapter_idx',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _eventMeta = const VerificationMeta('event');
+  @override
+  late final GeneratedColumn<String> event = GeneratedColumn<String>(
+    'event',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    projectId,
+    characterId,
+    chapterIdx,
+    event,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'character_events';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CharacterEvent> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('project_id')) {
+      context.handle(
+        _projectIdMeta,
+        projectId.isAcceptableOrUnknown(data['project_id']!, _projectIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_projectIdMeta);
+    }
+    if (data.containsKey('character_id')) {
+      context.handle(
+        _characterIdMeta,
+        characterId.isAcceptableOrUnknown(
+          data['character_id']!,
+          _characterIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_characterIdMeta);
+    }
+    if (data.containsKey('chapter_idx')) {
+      context.handle(
+        _chapterIdxMeta,
+        chapterIdx.isAcceptableOrUnknown(data['chapter_idx']!, _chapterIdxMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_chapterIdxMeta);
+    }
+    if (data.containsKey('event')) {
+      context.handle(
+        _eventMeta,
+        event.isAcceptableOrUnknown(data['event']!, _eventMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_eventMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  CharacterEvent map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CharacterEvent(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      projectId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}project_id'],
+      )!,
+      characterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}character_id'],
+      )!,
+      chapterIdx: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chapter_idx'],
+      )!,
+      event: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}event'],
+      )!,
+    );
+  }
+
+  @override
+  $CharacterEventsTable createAlias(String alias) {
+    return $CharacterEventsTable(attachedDatabase, alias);
+  }
+}
+
+class CharacterEvent extends DataClass implements Insertable<CharacterEvent> {
+  final int id;
+  final int projectId;
+  final int characterId;
+  final int chapterIdx;
+  final String event;
+  const CharacterEvent({
+    required this.id,
+    required this.projectId,
+    required this.characterId,
+    required this.chapterIdx,
+    required this.event,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['project_id'] = Variable<int>(projectId);
+    map['character_id'] = Variable<int>(characterId);
+    map['chapter_idx'] = Variable<int>(chapterIdx);
+    map['event'] = Variable<String>(event);
+    return map;
+  }
+
+  CharacterEventsCompanion toCompanion(bool nullToAbsent) {
+    return CharacterEventsCompanion(
+      id: Value(id),
+      projectId: Value(projectId),
+      characterId: Value(characterId),
+      chapterIdx: Value(chapterIdx),
+      event: Value(event),
+    );
+  }
+
+  factory CharacterEvent.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CharacterEvent(
+      id: serializer.fromJson<int>(json['id']),
+      projectId: serializer.fromJson<int>(json['projectId']),
+      characterId: serializer.fromJson<int>(json['characterId']),
+      chapterIdx: serializer.fromJson<int>(json['chapterIdx']),
+      event: serializer.fromJson<String>(json['event']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'projectId': serializer.toJson<int>(projectId),
+      'characterId': serializer.toJson<int>(characterId),
+      'chapterIdx': serializer.toJson<int>(chapterIdx),
+      'event': serializer.toJson<String>(event),
+    };
+  }
+
+  CharacterEvent copyWith({
+    int? id,
+    int? projectId,
+    int? characterId,
+    int? chapterIdx,
+    String? event,
+  }) => CharacterEvent(
+    id: id ?? this.id,
+    projectId: projectId ?? this.projectId,
+    characterId: characterId ?? this.characterId,
+    chapterIdx: chapterIdx ?? this.chapterIdx,
+    event: event ?? this.event,
+  );
+  CharacterEvent copyWithCompanion(CharacterEventsCompanion data) {
+    return CharacterEvent(
+      id: data.id.present ? data.id.value : this.id,
+      projectId: data.projectId.present ? data.projectId.value : this.projectId,
+      characterId: data.characterId.present
+          ? data.characterId.value
+          : this.characterId,
+      chapterIdx: data.chapterIdx.present
+          ? data.chapterIdx.value
+          : this.chapterIdx,
+      event: data.event.present ? data.event.value : this.event,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CharacterEvent(')
+          ..write('id: $id, ')
+          ..write('projectId: $projectId, ')
+          ..write('characterId: $characterId, ')
+          ..write('chapterIdx: $chapterIdx, ')
+          ..write('event: $event')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, projectId, characterId, chapterIdx, event);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CharacterEvent &&
+          other.id == this.id &&
+          other.projectId == this.projectId &&
+          other.characterId == this.characterId &&
+          other.chapterIdx == this.chapterIdx &&
+          other.event == this.event);
+}
+
+class CharacterEventsCompanion extends UpdateCompanion<CharacterEvent> {
+  final Value<int> id;
+  final Value<int> projectId;
+  final Value<int> characterId;
+  final Value<int> chapterIdx;
+  final Value<String> event;
+  const CharacterEventsCompanion({
+    this.id = const Value.absent(),
+    this.projectId = const Value.absent(),
+    this.characterId = const Value.absent(),
+    this.chapterIdx = const Value.absent(),
+    this.event = const Value.absent(),
+  });
+  CharacterEventsCompanion.insert({
+    this.id = const Value.absent(),
+    required int projectId,
+    required int characterId,
+    required int chapterIdx,
+    required String event,
+  }) : projectId = Value(projectId),
+       characterId = Value(characterId),
+       chapterIdx = Value(chapterIdx),
+       event = Value(event);
+  static Insertable<CharacterEvent> custom({
+    Expression<int>? id,
+    Expression<int>? projectId,
+    Expression<int>? characterId,
+    Expression<int>? chapterIdx,
+    Expression<String>? event,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (projectId != null) 'project_id': projectId,
+      if (characterId != null) 'character_id': characterId,
+      if (chapterIdx != null) 'chapter_idx': chapterIdx,
+      if (event != null) 'event': event,
+    });
+  }
+
+  CharacterEventsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? projectId,
+    Value<int>? characterId,
+    Value<int>? chapterIdx,
+    Value<String>? event,
+  }) {
+    return CharacterEventsCompanion(
+      id: id ?? this.id,
+      projectId: projectId ?? this.projectId,
+      characterId: characterId ?? this.characterId,
+      chapterIdx: chapterIdx ?? this.chapterIdx,
+      event: event ?? this.event,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (projectId.present) {
+      map['project_id'] = Variable<int>(projectId.value);
+    }
+    if (characterId.present) {
+      map['character_id'] = Variable<int>(characterId.value);
+    }
+    if (chapterIdx.present) {
+      map['chapter_idx'] = Variable<int>(chapterIdx.value);
+    }
+    if (event.present) {
+      map['event'] = Variable<String>(event.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CharacterEventsCompanion(')
+          ..write('id: $id, ')
+          ..write('projectId: $projectId, ')
+          ..write('characterId: $characterId, ')
+          ..write('chapterIdx: $chapterIdx, ')
+          ..write('event: $event')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $ChapterEmbeddingsTable extends ChapterEmbeddings
+    with TableInfo<$ChapterEmbeddingsTable, ChapterEmbedding> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ChapterEmbeddingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _projectIdMeta = const VerificationMeta(
+    'projectId',
+  );
+  @override
+  late final GeneratedColumn<int> projectId = GeneratedColumn<int>(
+    'project_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES projects (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _chapterIdMeta = const VerificationMeta(
+    'chapterId',
+  );
+  @override
+  late final GeneratedColumn<int> chapterId = GeneratedColumn<int>(
+    'chapter_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES chapters (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _dimMeta = const VerificationMeta('dim');
+  @override
+  late final GeneratedColumn<int> dim = GeneratedColumn<int>(
+    'dim',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _vectorJsonMeta = const VerificationMeta(
+    'vectorJson',
+  );
+  @override
+  late final GeneratedColumn<String> vectorJson = GeneratedColumn<String>(
+    'vector_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    projectId,
+    chapterId,
+    dim,
+    vectorJson,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'chapter_embeddings';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ChapterEmbedding> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('project_id')) {
+      context.handle(
+        _projectIdMeta,
+        projectId.isAcceptableOrUnknown(data['project_id']!, _projectIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_projectIdMeta);
+    }
+    if (data.containsKey('chapter_id')) {
+      context.handle(
+        _chapterIdMeta,
+        chapterId.isAcceptableOrUnknown(data['chapter_id']!, _chapterIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_chapterIdMeta);
+    }
+    if (data.containsKey('dim')) {
+      context.handle(
+        _dimMeta,
+        dim.isAcceptableOrUnknown(data['dim']!, _dimMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_dimMeta);
+    }
+    if (data.containsKey('vector_json')) {
+      context.handle(
+        _vectorJsonMeta,
+        vectorJson.isAcceptableOrUnknown(data['vector_json']!, _vectorJsonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_vectorJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {chapterId},
+  ];
+  @override
+  ChapterEmbedding map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ChapterEmbedding(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      projectId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}project_id'],
+      )!,
+      chapterId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chapter_id'],
+      )!,
+      dim: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}dim'],
+      )!,
+      vectorJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}vector_json'],
+      )!,
+    );
+  }
+
+  @override
+  $ChapterEmbeddingsTable createAlias(String alias) {
+    return $ChapterEmbeddingsTable(attachedDatabase, alias);
+  }
+}
+
+class ChapterEmbedding extends DataClass
+    implements Insertable<ChapterEmbedding> {
+  final int id;
+  final int projectId;
+  final int chapterId;
+  final int dim;
+  final String vectorJson;
+  const ChapterEmbedding({
+    required this.id,
+    required this.projectId,
+    required this.chapterId,
+    required this.dim,
+    required this.vectorJson,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['project_id'] = Variable<int>(projectId);
+    map['chapter_id'] = Variable<int>(chapterId);
+    map['dim'] = Variable<int>(dim);
+    map['vector_json'] = Variable<String>(vectorJson);
+    return map;
+  }
+
+  ChapterEmbeddingsCompanion toCompanion(bool nullToAbsent) {
+    return ChapterEmbeddingsCompanion(
+      id: Value(id),
+      projectId: Value(projectId),
+      chapterId: Value(chapterId),
+      dim: Value(dim),
+      vectorJson: Value(vectorJson),
+    );
+  }
+
+  factory ChapterEmbedding.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ChapterEmbedding(
+      id: serializer.fromJson<int>(json['id']),
+      projectId: serializer.fromJson<int>(json['projectId']),
+      chapterId: serializer.fromJson<int>(json['chapterId']),
+      dim: serializer.fromJson<int>(json['dim']),
+      vectorJson: serializer.fromJson<String>(json['vectorJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'projectId': serializer.toJson<int>(projectId),
+      'chapterId': serializer.toJson<int>(chapterId),
+      'dim': serializer.toJson<int>(dim),
+      'vectorJson': serializer.toJson<String>(vectorJson),
+    };
+  }
+
+  ChapterEmbedding copyWith({
+    int? id,
+    int? projectId,
+    int? chapterId,
+    int? dim,
+    String? vectorJson,
+  }) => ChapterEmbedding(
+    id: id ?? this.id,
+    projectId: projectId ?? this.projectId,
+    chapterId: chapterId ?? this.chapterId,
+    dim: dim ?? this.dim,
+    vectorJson: vectorJson ?? this.vectorJson,
+  );
+  ChapterEmbedding copyWithCompanion(ChapterEmbeddingsCompanion data) {
+    return ChapterEmbedding(
+      id: data.id.present ? data.id.value : this.id,
+      projectId: data.projectId.present ? data.projectId.value : this.projectId,
+      chapterId: data.chapterId.present ? data.chapterId.value : this.chapterId,
+      dim: data.dim.present ? data.dim.value : this.dim,
+      vectorJson: data.vectorJson.present
+          ? data.vectorJson.value
+          : this.vectorJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ChapterEmbedding(')
+          ..write('id: $id, ')
+          ..write('projectId: $projectId, ')
+          ..write('chapterId: $chapterId, ')
+          ..write('dim: $dim, ')
+          ..write('vectorJson: $vectorJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, projectId, chapterId, dim, vectorJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ChapterEmbedding &&
+          other.id == this.id &&
+          other.projectId == this.projectId &&
+          other.chapterId == this.chapterId &&
+          other.dim == this.dim &&
+          other.vectorJson == this.vectorJson);
+}
+
+class ChapterEmbeddingsCompanion extends UpdateCompanion<ChapterEmbedding> {
+  final Value<int> id;
+  final Value<int> projectId;
+  final Value<int> chapterId;
+  final Value<int> dim;
+  final Value<String> vectorJson;
+  const ChapterEmbeddingsCompanion({
+    this.id = const Value.absent(),
+    this.projectId = const Value.absent(),
+    this.chapterId = const Value.absent(),
+    this.dim = const Value.absent(),
+    this.vectorJson = const Value.absent(),
+  });
+  ChapterEmbeddingsCompanion.insert({
+    this.id = const Value.absent(),
+    required int projectId,
+    required int chapterId,
+    required int dim,
+    required String vectorJson,
+  }) : projectId = Value(projectId),
+       chapterId = Value(chapterId),
+       dim = Value(dim),
+       vectorJson = Value(vectorJson);
+  static Insertable<ChapterEmbedding> custom({
+    Expression<int>? id,
+    Expression<int>? projectId,
+    Expression<int>? chapterId,
+    Expression<int>? dim,
+    Expression<String>? vectorJson,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (projectId != null) 'project_id': projectId,
+      if (chapterId != null) 'chapter_id': chapterId,
+      if (dim != null) 'dim': dim,
+      if (vectorJson != null) 'vector_json': vectorJson,
+    });
+  }
+
+  ChapterEmbeddingsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? projectId,
+    Value<int>? chapterId,
+    Value<int>? dim,
+    Value<String>? vectorJson,
+  }) {
+    return ChapterEmbeddingsCompanion(
+      id: id ?? this.id,
+      projectId: projectId ?? this.projectId,
+      chapterId: chapterId ?? this.chapterId,
+      dim: dim ?? this.dim,
+      vectorJson: vectorJson ?? this.vectorJson,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (projectId.present) {
+      map['project_id'] = Variable<int>(projectId.value);
+    }
+    if (chapterId.present) {
+      map['chapter_id'] = Variable<int>(chapterId.value);
+    }
+    if (dim.present) {
+      map['dim'] = Variable<int>(dim.value);
+    }
+    if (vectorJson.present) {
+      map['vector_json'] = Variable<String>(vectorJson.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ChapterEmbeddingsCompanion(')
+          ..write('id: $id, ')
+          ..write('projectId: $projectId, ')
+          ..write('chapterId: $chapterId, ')
+          ..write('dim: $dim, ')
+          ..write('vectorJson: $vectorJson')
           ..write(')'))
         .toString();
   }
@@ -6316,6 +7297,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $ChaptersTable chapters = $ChaptersTable(this);
   late final $ParagraphsTable paragraphs = $ParagraphsTable(this);
   late final $AnnotationsTable annotations = $AnnotationsTable(this);
+  late final $CharacterEventsTable characterEvents = $CharacterEventsTable(
+    this,
+  );
+  late final $ChapterEmbeddingsTable chapterEmbeddings =
+      $ChapterEmbeddingsTable(this);
   late final $SettingsTable settings = $SettingsTable(this);
   late final $LlmLogsTable llmLogs = $LlmLogsTable(this);
   late final $LlmCacheTable llmCache = $LlmCacheTable(this);
@@ -6360,6 +7346,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_annotations_para',
     'CREATE INDEX idx_annotations_para ON annotations (para_id)',
   );
+  late final Index idxCharacterEventsProject = Index(
+    'idx_character_events_project',
+    'CREATE INDEX idx_character_events_project ON character_events (project_id)',
+  );
+  late final Index idxCharacterEventsCharacter = Index(
+    'idx_character_events_character',
+    'CREATE INDEX idx_character_events_character ON character_events (character_id)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6376,6 +7370,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     chapters,
     paragraphs,
     annotations,
+    characterEvents,
+    chapterEmbeddings,
     settings,
     llmLogs,
     llmCache,
@@ -6390,6 +7386,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxParagraphsProject,
     idxParagraphsChapter,
     idxAnnotationsPara,
+    idxCharacterEventsProject,
+    idxCharacterEventsCharacter,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -6462,6 +7460,34 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('annotations', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'projects',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('character_events', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'characters',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('character_events', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'projects',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('chapter_embeddings', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'chapters',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('chapter_embeddings', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -6617,6 +7643,47 @@ final class $$ProjectsTableReferences
     ).filter((f) => f.projectId.id.sqlEquals($_itemColumn<int>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_paragraphsRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$CharacterEventsTable, List<CharacterEvent>>
+  _characterEventsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.characterEvents,
+    aliasName: 'projects__id__character_events__project_id',
+  );
+
+  $$CharacterEventsTableProcessedTableManager get characterEventsRefs {
+    final manager = $$CharacterEventsTableTableManager(
+      $_db,
+      $_db.characterEvents,
+    ).filter((f) => f.projectId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _characterEventsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$ChapterEmbeddingsTable, List<ChapterEmbedding>>
+  _chapterEmbeddingsRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.chapterEmbeddings,
+        aliasName: 'projects__id__chapter_embeddings__project_id',
+      );
+
+  $$ChapterEmbeddingsTableProcessedTableManager get chapterEmbeddingsRefs {
+    final manager = $$ChapterEmbeddingsTableTableManager(
+      $_db,
+      $_db.chapterEmbeddings,
+    ).filter((f) => f.projectId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _chapterEmbeddingsRefsTable($_db),
+    );
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -6843,6 +7910,56 @@ class $$ProjectsTableFilterComposer
           }) => $$ParagraphsTableFilterComposer(
             $db: $db,
             $table: $db.paragraphs,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> characterEventsRefs(
+    Expression<bool> Function($$CharacterEventsTableFilterComposer f) f,
+  ) {
+    final $$CharacterEventsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.characterEvents,
+      getReferencedColumn: (t) => t.projectId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharacterEventsTableFilterComposer(
+            $db: $db,
+            $table: $db.characterEvents,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> chapterEmbeddingsRefs(
+    Expression<bool> Function($$ChapterEmbeddingsTableFilterComposer f) f,
+  ) {
+    final $$ChapterEmbeddingsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.chapterEmbeddings,
+      getReferencedColumn: (t) => t.projectId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChapterEmbeddingsTableFilterComposer(
+            $db: $db,
+            $table: $db.chapterEmbeddings,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -7122,6 +8239,57 @@ class $$ProjectsTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> characterEventsRefs<T extends Object>(
+    Expression<T> Function($$CharacterEventsTableAnnotationComposer a) f,
+  ) {
+    final $$CharacterEventsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.characterEvents,
+      getReferencedColumn: (t) => t.projectId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharacterEventsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.characterEvents,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<T> chapterEmbeddingsRefs<T extends Object>(
+    Expression<T> Function($$ChapterEmbeddingsTableAnnotationComposer a) f,
+  ) {
+    final $$ChapterEmbeddingsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.chapterEmbeddings,
+          getReferencedColumn: (t) => t.projectId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$ChapterEmbeddingsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.chapterEmbeddings,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
 }
 
 class $$ProjectsTableTableManager
@@ -7145,6 +8313,8 @@ class $$ProjectsTableTableManager
             bool questionsRefs,
             bool chaptersRefs,
             bool paragraphsRefs,
+            bool characterEventsRefs,
+            bool chapterEmbeddingsRefs,
           })
         > {
   $$ProjectsTableTableManager(_$AppDatabase db, $ProjectsTable table)
@@ -7219,6 +8389,8 @@ class $$ProjectsTableTableManager
                 questionsRefs = false,
                 chaptersRefs = false,
                 paragraphsRefs = false,
+                characterEventsRefs = false,
+                chapterEmbeddingsRefs = false,
               }) {
                 return PrefetchHooks(
                   db: db,
@@ -7230,6 +8402,8 @@ class $$ProjectsTableTableManager
                     if (questionsRefs) db.questions,
                     if (chaptersRefs) db.chapters,
                     if (paragraphsRefs) db.paragraphs,
+                    if (characterEventsRefs) db.characterEvents,
+                    if (chapterEmbeddingsRefs) db.chapterEmbeddings,
                   ],
                   addJoins: null,
                   getPrefetchedDataCallback: (items) async {
@@ -7381,6 +8555,48 @@ class $$ProjectsTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (characterEventsRefs)
+                        await $_getPrefetchedData<
+                          Project,
+                          $ProjectsTable,
+                          CharacterEvent
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ProjectsTableReferences
+                              ._characterEventsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ProjectsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).characterEventsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.projectId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (chapterEmbeddingsRefs)
+                        await $_getPrefetchedData<
+                          Project,
+                          $ProjectsTable,
+                          ChapterEmbedding
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ProjectsTableReferences
+                              ._chapterEmbeddingsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ProjectsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).chapterEmbeddingsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.projectId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                     ];
                   },
                 );
@@ -7409,6 +8625,8 @@ typedef $$ProjectsTableProcessedTableManager =
         bool questionsRefs,
         bool chaptersRefs,
         bool paragraphsRefs,
+        bool characterEventsRefs,
+        bool chapterEmbeddingsRefs,
       })
     >;
 typedef $$CharactersTableCreateCompanionBuilder = CharactersCompanion Function({
@@ -7420,6 +8638,7 @@ typedef $$CharactersTableCreateCompanionBuilder = CharactersCompanion Function({
   Value<double?> confidence,
   Value<String> source,
   Value<String?> color,
+  Value<bool> major,
 });
 typedef $$CharactersTableUpdateCompanionBuilder = CharactersCompanion Function({
   Value<int> id,
@@ -7430,6 +8649,7 @@ typedef $$CharactersTableUpdateCompanionBuilder = CharactersCompanion Function({
   Value<double?> confidence,
   Value<String> source,
   Value<String?> color,
+  Value<bool> major,
 });
 
 final class $$CharactersTableReferences
@@ -7450,6 +8670,26 @@ final class $$CharactersTableReferences
     if (item == null) return manager;
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static MultiTypedResultKey<$CharacterEventsTable, List<CharacterEvent>>
+  _characterEventsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.characterEvents,
+    aliasName: 'characters__id__character_events__character_id',
+  );
+
+  $$CharacterEventsTableProcessedTableManager get characterEventsRefs {
+    final manager = $$CharacterEventsTableTableManager(
+      $_db,
+      $_db.characterEvents,
+    ).filter((f) => f.characterId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _characterEventsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
     );
   }
 }
@@ -7498,6 +8738,11 @@ class $$CharactersTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<bool> get major => $composableBuilder(
+    column: $table.major,
+    builder: (column) => ColumnFilters(column),
+  );
+
   $$ProjectsTableFilterComposer get projectId {
     final $$ProjectsTableFilterComposer composer = $composerBuilder(
       composer: this,
@@ -7519,6 +8764,31 @@ class $$CharactersTableFilterComposer
           ),
     );
     return composer;
+  }
+
+  Expression<bool> characterEventsRefs(
+    Expression<bool> Function($$CharacterEventsTableFilterComposer f) f,
+  ) {
+    final $$CharacterEventsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.characterEvents,
+      getReferencedColumn: (t) => t.characterId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharacterEventsTableFilterComposer(
+            $db: $db,
+            $table: $db.characterEvents,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
   }
 }
 
@@ -7563,6 +8833,11 @@ class $$CharactersTableOrderingComposer
 
   ColumnOrderings<String> get color => $composableBuilder(
     column: $table.color,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get major => $composableBuilder(
+    column: $table.major,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -7626,6 +8901,9 @@ class $$CharactersTableAnnotationComposer
   GeneratedColumn<String> get color =>
       $composableBuilder(column: $table.color, builder: (column) => column);
 
+  GeneratedColumn<bool> get major =>
+      $composableBuilder(column: $table.major, builder: (column) => column);
+
   $$ProjectsTableAnnotationComposer get projectId {
     final $$ProjectsTableAnnotationComposer composer = $composerBuilder(
       composer: this,
@@ -7648,6 +8926,31 @@ class $$CharactersTableAnnotationComposer
     );
     return composer;
   }
+
+  Expression<T> characterEventsRefs<T extends Object>(
+    Expression<T> Function($$CharacterEventsTableAnnotationComposer a) f,
+  ) {
+    final $$CharacterEventsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.characterEvents,
+      getReferencedColumn: (t) => t.characterId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharacterEventsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.characterEvents,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$CharactersTableTableManager
@@ -7663,7 +8966,7 @@ class $$CharactersTableTableManager
           $$CharactersTableUpdateCompanionBuilder,
           (Character, $$CharactersTableReferences),
           Character,
-          PrefetchHooks Function({bool projectId})
+          PrefetchHooks Function({bool projectId, bool characterEventsRefs})
         > {
   $$CharactersTableTableManager(_$AppDatabase db, $CharactersTable table)
     : super(
@@ -7686,6 +8989,7 @@ class $$CharactersTableTableManager
                 Value<double?> confidence = const Value.absent(),
                 Value<String> source = const Value.absent(),
                 Value<String?> color = const Value.absent(),
+                Value<bool> major = const Value.absent(),
               }) => CharactersCompanion(
                 id: id,
                 projectId: projectId,
@@ -7695,6 +8999,7 @@ class $$CharactersTableTableManager
                 confidence: confidence,
                 source: source,
                 color: color,
+                major: major,
               ),
           createCompanionCallback:
               ({
@@ -7706,6 +9011,7 @@ class $$CharactersTableTableManager
                 Value<double?> confidence = const Value.absent(),
                 Value<String> source = const Value.absent(),
                 Value<String?> color = const Value.absent(),
+                Value<bool> major = const Value.absent(),
               }) => CharactersCompanion.insert(
                 id: id,
                 projectId: projectId,
@@ -7715,6 +9021,7 @@ class $$CharactersTableTableManager
                 confidence: confidence,
                 source: source,
                 color: color,
+                major: major,
               ),
           withReferenceMapper: (p0) => p0
               .map(
@@ -7724,45 +9031,70 @@ class $$CharactersTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback: ({projectId = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [],
-              addJoins:
-                  <
-                    T extends TableManagerState<
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic
-                    >
-                  >(state) {
-                    if (projectId) {
-                      state = state.withJoin(
-                        currentTable: table,
-                        currentColumn: table.projectId,
-                        referencedTable: $$CharactersTableReferences
-                            ._projectIdTable(db),
-                        referencedColumn: $$CharactersTableReferences
-                            ._projectIdTable(db)
-                            .id,
-                      ) as T;
-                    }
+          prefetchHooksCallback:
+              ({projectId = false, characterEventsRefs = false}) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (characterEventsRefs) db.characterEvents,
+                  ],
+                  addJoins:
+                      <
+                        T extends TableManagerState<
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic
+                        >
+                      >(state) {
+                        if (projectId) {
+                          state = state.withJoin(
+                            currentTable: table,
+                            currentColumn: table.projectId,
+                            referencedTable: $$CharactersTableReferences
+                                ._projectIdTable(db),
+                            referencedColumn: $$CharactersTableReferences
+                                ._projectIdTable(db)
+                                .id,
+                          ) as T;
+                        }
 
-                    return state;
+                        return state;
+                      },
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (characterEventsRefs)
+                        await $_getPrefetchedData<
+                          Character,
+                          $CharactersTable,
+                          CharacterEvent
+                        >(
+                          currentTable: table,
+                          referencedTable: $$CharactersTableReferences
+                              ._characterEventsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$CharactersTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).characterEventsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.characterId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                    ];
                   },
-              getPrefetchedDataCallback: (items) async {
-                return [];
+                );
               },
-            );
-          },
         ),
       );
 }
@@ -7779,7 +9111,7 @@ typedef $$CharactersTableProcessedTableManager =
       $$CharactersTableUpdateCompanionBuilder,
       (Character, $$CharactersTableReferences),
       Character,
-      PrefetchHooks Function({bool projectId})
+      PrefetchHooks Function({bool projectId, bool characterEventsRefs})
     >;
 typedef $$SegmentsTableCreateCompanionBuilder = SegmentsCompanion Function({
   Value<int> id,
@@ -10104,6 +11436,10 @@ typedef $$ChaptersTableCreateCompanionBuilder = ChaptersCompanion Function({
   required int startPara,
   required int endPara,
   Value<String?> summary,
+  Value<bool> mapDone,
+  Value<bool> annotDone,
+  Value<String> castIds,
+  Value<String?> digestBefore,
 });
 typedef $$ChaptersTableUpdateCompanionBuilder = ChaptersCompanion Function({
   Value<int> id,
@@ -10113,6 +11449,10 @@ typedef $$ChaptersTableUpdateCompanionBuilder = ChaptersCompanion Function({
   Value<int> startPara,
   Value<int> endPara,
   Value<String?> summary,
+  Value<bool> mapDone,
+  Value<bool> annotDone,
+  Value<String> castIds,
+  Value<String?> digestBefore,
 });
 
 final class $$ChaptersTableReferences
@@ -10133,6 +11473,27 @@ final class $$ChaptersTableReferences
     if (item == null) return manager;
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static MultiTypedResultKey<$ChapterEmbeddingsTable, List<ChapterEmbedding>>
+  _chapterEmbeddingsRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.chapterEmbeddings,
+        aliasName: 'chapters__id__chapter_embeddings__chapter_id',
+      );
+
+  $$ChapterEmbeddingsTableProcessedTableManager get chapterEmbeddingsRefs {
+    final manager = $$ChapterEmbeddingsTableTableManager(
+      $_db,
+      $_db.chapterEmbeddings,
+    ).filter((f) => f.chapterId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _chapterEmbeddingsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
     );
   }
 }
@@ -10176,6 +11537,26 @@ class $$ChaptersTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<bool> get mapDone => $composableBuilder(
+    column: $table.mapDone,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get annotDone => $composableBuilder(
+    column: $table.annotDone,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get castIds => $composableBuilder(
+    column: $table.castIds,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get digestBefore => $composableBuilder(
+    column: $table.digestBefore,
+    builder: (column) => ColumnFilters(column),
+  );
+
   $$ProjectsTableFilterComposer get projectId {
     final $$ProjectsTableFilterComposer composer = $composerBuilder(
       composer: this,
@@ -10197,6 +11578,31 @@ class $$ChaptersTableFilterComposer
           ),
     );
     return composer;
+  }
+
+  Expression<bool> chapterEmbeddingsRefs(
+    Expression<bool> Function($$ChapterEmbeddingsTableFilterComposer f) f,
+  ) {
+    final $$ChapterEmbeddingsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.chapterEmbeddings,
+      getReferencedColumn: (t) => t.chapterId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChapterEmbeddingsTableFilterComposer(
+            $db: $db,
+            $table: $db.chapterEmbeddings,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
   }
 }
 
@@ -10236,6 +11642,26 @@ class $$ChaptersTableOrderingComposer
 
   ColumnOrderings<String> get summary => $composableBuilder(
     column: $table.summary,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get mapDone => $composableBuilder(
+    column: $table.mapDone,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get annotDone => $composableBuilder(
+    column: $table.annotDone,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get castIds => $composableBuilder(
+    column: $table.castIds,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get digestBefore => $composableBuilder(
+    column: $table.digestBefore,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -10290,6 +11716,20 @@ class $$ChaptersTableAnnotationComposer
   GeneratedColumn<String> get summary =>
       $composableBuilder(column: $table.summary, builder: (column) => column);
 
+  GeneratedColumn<bool> get mapDone =>
+      $composableBuilder(column: $table.mapDone, builder: (column) => column);
+
+  GeneratedColumn<bool> get annotDone =>
+      $composableBuilder(column: $table.annotDone, builder: (column) => column);
+
+  GeneratedColumn<String> get castIds =>
+      $composableBuilder(column: $table.castIds, builder: (column) => column);
+
+  GeneratedColumn<String> get digestBefore => $composableBuilder(
+    column: $table.digestBefore,
+    builder: (column) => column,
+  );
+
   $$ProjectsTableAnnotationComposer get projectId {
     final $$ProjectsTableAnnotationComposer composer = $composerBuilder(
       composer: this,
@@ -10312,6 +11752,32 @@ class $$ChaptersTableAnnotationComposer
     );
     return composer;
   }
+
+  Expression<T> chapterEmbeddingsRefs<T extends Object>(
+    Expression<T> Function($$ChapterEmbeddingsTableAnnotationComposer a) f,
+  ) {
+    final $$ChapterEmbeddingsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.chapterEmbeddings,
+          getReferencedColumn: (t) => t.chapterId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$ChapterEmbeddingsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.chapterEmbeddings,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
 }
 
 class $$ChaptersTableTableManager
@@ -10327,7 +11793,7 @@ class $$ChaptersTableTableManager
           $$ChaptersTableUpdateCompanionBuilder,
           (Chapter, $$ChaptersTableReferences),
           Chapter,
-          PrefetchHooks Function({bool projectId})
+          PrefetchHooks Function({bool projectId, bool chapterEmbeddingsRefs})
         > {
   $$ChaptersTableTableManager(_$AppDatabase db, $ChaptersTable table)
     : super(
@@ -10349,6 +11815,10 @@ class $$ChaptersTableTableManager
                 Value<int> startPara = const Value.absent(),
                 Value<int> endPara = const Value.absent(),
                 Value<String?> summary = const Value.absent(),
+                Value<bool> mapDone = const Value.absent(),
+                Value<bool> annotDone = const Value.absent(),
+                Value<String> castIds = const Value.absent(),
+                Value<String?> digestBefore = const Value.absent(),
               }) => ChaptersCompanion(
                 id: id,
                 projectId: projectId,
@@ -10357,6 +11827,10 @@ class $$ChaptersTableTableManager
                 startPara: startPara,
                 endPara: endPara,
                 summary: summary,
+                mapDone: mapDone,
+                annotDone: annotDone,
+                castIds: castIds,
+                digestBefore: digestBefore,
               ),
           createCompanionCallback:
               ({
@@ -10367,6 +11841,10 @@ class $$ChaptersTableTableManager
                 required int startPara,
                 required int endPara,
                 Value<String?> summary = const Value.absent(),
+                Value<bool> mapDone = const Value.absent(),
+                Value<bool> annotDone = const Value.absent(),
+                Value<String> castIds = const Value.absent(),
+                Value<String?> digestBefore = const Value.absent(),
               }) => ChaptersCompanion.insert(
                 id: id,
                 projectId: projectId,
@@ -10375,6 +11853,10 @@ class $$ChaptersTableTableManager
                 startPara: startPara,
                 endPara: endPara,
                 summary: summary,
+                mapDone: mapDone,
+                annotDone: annotDone,
+                castIds: castIds,
+                digestBefore: digestBefore,
               ),
           withReferenceMapper: (p0) => p0
               .map(
@@ -10384,45 +11866,70 @@ class $$ChaptersTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback: ({projectId = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [],
-              addJoins:
-                  <
-                    T extends TableManagerState<
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic
-                    >
-                  >(state) {
-                    if (projectId) {
-                      state = state.withJoin(
-                        currentTable: table,
-                        currentColumn: table.projectId,
-                        referencedTable: $$ChaptersTableReferences
-                            ._projectIdTable(db),
-                        referencedColumn: $$ChaptersTableReferences
-                            ._projectIdTable(db)
-                            .id,
-                      ) as T;
-                    }
+          prefetchHooksCallback:
+              ({projectId = false, chapterEmbeddingsRefs = false}) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (chapterEmbeddingsRefs) db.chapterEmbeddings,
+                  ],
+                  addJoins:
+                      <
+                        T extends TableManagerState<
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic
+                        >
+                      >(state) {
+                        if (projectId) {
+                          state = state.withJoin(
+                            currentTable: table,
+                            currentColumn: table.projectId,
+                            referencedTable: $$ChaptersTableReferences
+                                ._projectIdTable(db),
+                            referencedColumn: $$ChaptersTableReferences
+                                ._projectIdTable(db)
+                                .id,
+                          ) as T;
+                        }
 
-                    return state;
+                        return state;
+                      },
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (chapterEmbeddingsRefs)
+                        await $_getPrefetchedData<
+                          Chapter,
+                          $ChaptersTable,
+                          ChapterEmbedding
+                        >(
+                          currentTable: table,
+                          referencedTable: $$ChaptersTableReferences
+                              ._chapterEmbeddingsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$ChaptersTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).chapterEmbeddingsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.chapterId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                    ];
                   },
-              getPrefetchedDataCallback: (items) async {
-                return [];
+                );
               },
-            );
-          },
         ),
       );
 }
@@ -10439,7 +11946,7 @@ typedef $$ChaptersTableProcessedTableManager =
       $$ChaptersTableUpdateCompanionBuilder,
       (Chapter, $$ChaptersTableReferences),
       Chapter,
-      PrefetchHooks Function({bool projectId})
+      PrefetchHooks Function({bool projectId, bool chapterEmbeddingsRefs})
     >;
 typedef $$ParagraphsTableCreateCompanionBuilder = ParagraphsCompanion Function({
   Value<int> id,
@@ -11132,6 +12639,817 @@ typedef $$AnnotationsTableProcessedTableManager =
       (Annotation, $$AnnotationsTableReferences),
       Annotation,
       PrefetchHooks Function({bool paraId})
+    >;
+typedef $$CharacterEventsTableCreateCompanionBuilder =
+    CharacterEventsCompanion Function({
+      Value<int> id,
+      required int projectId,
+      required int characterId,
+      required int chapterIdx,
+      required String event,
+    });
+typedef $$CharacterEventsTableUpdateCompanionBuilder =
+    CharacterEventsCompanion Function({
+      Value<int> id,
+      Value<int> projectId,
+      Value<int> characterId,
+      Value<int> chapterIdx,
+      Value<String> event,
+    });
+
+final class $$CharacterEventsTableReferences
+    extends
+        BaseReferences<_$AppDatabase, $CharacterEventsTable, CharacterEvent> {
+  $$CharacterEventsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ProjectsTable _projectIdTable(_$AppDatabase db) =>
+      db.projects.createAlias('character_events__project_id__projects__id');
+
+  $$ProjectsTableProcessedTableManager get projectId {
+    final $_column = $_itemColumn<int>('project_id')!;
+
+    final manager = $$ProjectsTableTableManager(
+      $_db,
+      $_db.projects,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_projectIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $CharactersTable _characterIdTable(_$AppDatabase db) => db.characters
+      .createAlias('character_events__character_id__characters__id');
+
+  $$CharactersTableProcessedTableManager get characterId {
+    final $_column = $_itemColumn<int>('character_id')!;
+
+    final manager = $$CharactersTableTableManager(
+      $_db,
+      $_db.characters,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_characterIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$CharacterEventsTableFilterComposer
+    extends Composer<_$AppDatabase, $CharacterEventsTable> {
+  $$CharacterEventsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get chapterIdx => $composableBuilder(
+    column: $table.chapterIdx,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get event => $composableBuilder(
+    column: $table.event,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ProjectsTableFilterComposer get projectId {
+    final $$ProjectsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.projectId,
+      referencedTable: $db.projects,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProjectsTableFilterComposer(
+            $db: $db,
+            $table: $db.projects,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableFilterComposer get characterId {
+    final $$CharactersTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.characterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableFilterComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$CharacterEventsTableOrderingComposer
+    extends Composer<_$AppDatabase, $CharacterEventsTable> {
+  $$CharacterEventsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get chapterIdx => $composableBuilder(
+    column: $table.chapterIdx,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get event => $composableBuilder(
+    column: $table.event,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ProjectsTableOrderingComposer get projectId {
+    final $$ProjectsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.projectId,
+      referencedTable: $db.projects,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProjectsTableOrderingComposer(
+            $db: $db,
+            $table: $db.projects,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableOrderingComposer get characterId {
+    final $$CharactersTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.characterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableOrderingComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$CharacterEventsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CharacterEventsTable> {
+  $$CharacterEventsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get chapterIdx => $composableBuilder(
+    column: $table.chapterIdx,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get event =>
+      $composableBuilder(column: $table.event, builder: (column) => column);
+
+  $$ProjectsTableAnnotationComposer get projectId {
+    final $$ProjectsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.projectId,
+      referencedTable: $db.projects,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProjectsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.projects,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$CharactersTableAnnotationComposer get characterId {
+    final $$CharactersTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.characterId,
+      referencedTable: $db.characters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$CharactersTableAnnotationComposer(
+            $db: $db,
+            $table: $db.characters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$CharacterEventsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $CharacterEventsTable,
+          CharacterEvent,
+          $$CharacterEventsTableFilterComposer,
+          $$CharacterEventsTableOrderingComposer,
+          $$CharacterEventsTableAnnotationComposer,
+          $$CharacterEventsTableCreateCompanionBuilder,
+          $$CharacterEventsTableUpdateCompanionBuilder,
+          (CharacterEvent, $$CharacterEventsTableReferences),
+          CharacterEvent,
+          PrefetchHooks Function({bool projectId, bool characterId})
+        > {
+  $$CharacterEventsTableTableManager(
+    _$AppDatabase db,
+    $CharacterEventsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CharacterEventsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CharacterEventsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CharacterEventsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> projectId = const Value.absent(),
+                Value<int> characterId = const Value.absent(),
+                Value<int> chapterIdx = const Value.absent(),
+                Value<String> event = const Value.absent(),
+              }) => CharacterEventsCompanion(
+                id: id,
+                projectId: projectId,
+                characterId: characterId,
+                chapterIdx: chapterIdx,
+                event: event,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int projectId,
+                required int characterId,
+                required int chapterIdx,
+                required String event,
+              }) => CharacterEventsCompanion.insert(
+                id: id,
+                projectId: projectId,
+                characterId: characterId,
+                chapterIdx: chapterIdx,
+                event: event,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$CharacterEventsTable, CharacterEvent>(table),
+                  $$CharacterEventsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({projectId = false, characterId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (projectId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.projectId,
+                        referencedTable: $$CharacterEventsTableReferences
+                            ._projectIdTable(db),
+                        referencedColumn: $$CharacterEventsTableReferences
+                            ._projectIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+                    if (characterId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.characterId,
+                        referencedTable: $$CharacterEventsTableReferences
+                            ._characterIdTable(db),
+                        referencedColumn: $$CharacterEventsTableReferences
+                            ._characterIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$CharacterEventsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $CharacterEventsTable,
+      CharacterEvent,
+      $$CharacterEventsTableFilterComposer,
+      $$CharacterEventsTableOrderingComposer,
+      $$CharacterEventsTableAnnotationComposer,
+      $$CharacterEventsTableCreateCompanionBuilder,
+      $$CharacterEventsTableUpdateCompanionBuilder,
+      (CharacterEvent, $$CharacterEventsTableReferences),
+      CharacterEvent,
+      PrefetchHooks Function({bool projectId, bool characterId})
+    >;
+typedef $$ChapterEmbeddingsTableCreateCompanionBuilder =
+    ChapterEmbeddingsCompanion Function({
+      Value<int> id,
+      required int projectId,
+      required int chapterId,
+      required int dim,
+      required String vectorJson,
+    });
+typedef $$ChapterEmbeddingsTableUpdateCompanionBuilder =
+    ChapterEmbeddingsCompanion Function({
+      Value<int> id,
+      Value<int> projectId,
+      Value<int> chapterId,
+      Value<int> dim,
+      Value<String> vectorJson,
+    });
+
+final class $$ChapterEmbeddingsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $ChapterEmbeddingsTable,
+          ChapterEmbedding
+        > {
+  $$ChapterEmbeddingsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $ProjectsTable _projectIdTable(_$AppDatabase db) =>
+      db.projects.createAlias('chapter_embeddings__project_id__projects__id');
+
+  $$ProjectsTableProcessedTableManager get projectId {
+    final $_column = $_itemColumn<int>('project_id')!;
+
+    final manager = $$ProjectsTableTableManager(
+      $_db,
+      $_db.projects,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_projectIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $ChaptersTable _chapterIdTable(_$AppDatabase db) =>
+      db.chapters.createAlias('chapter_embeddings__chapter_id__chapters__id');
+
+  $$ChaptersTableProcessedTableManager get chapterId {
+    final $_column = $_itemColumn<int>('chapter_id')!;
+
+    final manager = $$ChaptersTableTableManager(
+      $_db,
+      $_db.chapters,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_chapterIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$ChapterEmbeddingsTableFilterComposer
+    extends Composer<_$AppDatabase, $ChapterEmbeddingsTable> {
+  $$ChapterEmbeddingsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dim => $composableBuilder(
+    column: $table.dim,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get vectorJson => $composableBuilder(
+    column: $table.vectorJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$ProjectsTableFilterComposer get projectId {
+    final $$ProjectsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.projectId,
+      referencedTable: $db.projects,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProjectsTableFilterComposer(
+            $db: $db,
+            $table: $db.projects,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ChaptersTableFilterComposer get chapterId {
+    final $$ChaptersTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.chapterId,
+      referencedTable: $db.chapters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChaptersTableFilterComposer(
+            $db: $db,
+            $table: $db.chapters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ChapterEmbeddingsTableOrderingComposer
+    extends Composer<_$AppDatabase, $ChapterEmbeddingsTable> {
+  $$ChapterEmbeddingsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dim => $composableBuilder(
+    column: $table.dim,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get vectorJson => $composableBuilder(
+    column: $table.vectorJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$ProjectsTableOrderingComposer get projectId {
+    final $$ProjectsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.projectId,
+      referencedTable: $db.projects,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProjectsTableOrderingComposer(
+            $db: $db,
+            $table: $db.projects,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ChaptersTableOrderingComposer get chapterId {
+    final $$ChaptersTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.chapterId,
+      referencedTable: $db.chapters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChaptersTableOrderingComposer(
+            $db: $db,
+            $table: $db.chapters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ChapterEmbeddingsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ChapterEmbeddingsTable> {
+  $$ChapterEmbeddingsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get dim =>
+      $composableBuilder(column: $table.dim, builder: (column) => column);
+
+  GeneratedColumn<String> get vectorJson => $composableBuilder(
+    column: $table.vectorJson,
+    builder: (column) => column,
+  );
+
+  $$ProjectsTableAnnotationComposer get projectId {
+    final $$ProjectsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.projectId,
+      referencedTable: $db.projects,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ProjectsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.projects,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+
+  $$ChaptersTableAnnotationComposer get chapterId {
+    final $$ChaptersTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.chapterId,
+      referencedTable: $db.chapters,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ChaptersTableAnnotationComposer(
+            $db: $db,
+            $table: $db.chapters,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ChapterEmbeddingsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $ChapterEmbeddingsTable,
+          ChapterEmbedding,
+          $$ChapterEmbeddingsTableFilterComposer,
+          $$ChapterEmbeddingsTableOrderingComposer,
+          $$ChapterEmbeddingsTableAnnotationComposer,
+          $$ChapterEmbeddingsTableCreateCompanionBuilder,
+          $$ChapterEmbeddingsTableUpdateCompanionBuilder,
+          (ChapterEmbedding, $$ChapterEmbeddingsTableReferences),
+          ChapterEmbedding,
+          PrefetchHooks Function({bool projectId, bool chapterId})
+        > {
+  $$ChapterEmbeddingsTableTableManager(
+    _$AppDatabase db,
+    $ChapterEmbeddingsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ChapterEmbeddingsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ChapterEmbeddingsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ChapterEmbeddingsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> projectId = const Value.absent(),
+                Value<int> chapterId = const Value.absent(),
+                Value<int> dim = const Value.absent(),
+                Value<String> vectorJson = const Value.absent(),
+              }) => ChapterEmbeddingsCompanion(
+                id: id,
+                projectId: projectId,
+                chapterId: chapterId,
+                dim: dim,
+                vectorJson: vectorJson,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int projectId,
+                required int chapterId,
+                required int dim,
+                required String vectorJson,
+              }) => ChapterEmbeddingsCompanion.insert(
+                id: id,
+                projectId: projectId,
+                chapterId: chapterId,
+                dim: dim,
+                vectorJson: vectorJson,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$ChapterEmbeddingsTable, ChapterEmbedding>(table),
+                  $$ChapterEmbeddingsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({projectId = false, chapterId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (projectId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.projectId,
+                        referencedTable: $$ChapterEmbeddingsTableReferences
+                            ._projectIdTable(db),
+                        referencedColumn: $$ChapterEmbeddingsTableReferences
+                            ._projectIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+                    if (chapterId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.chapterId,
+                        referencedTable: $$ChapterEmbeddingsTableReferences
+                            ._chapterIdTable(db),
+                        referencedColumn: $$ChapterEmbeddingsTableReferences
+                            ._chapterIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$ChapterEmbeddingsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $ChapterEmbeddingsTable,
+      ChapterEmbedding,
+      $$ChapterEmbeddingsTableFilterComposer,
+      $$ChapterEmbeddingsTableOrderingComposer,
+      $$ChapterEmbeddingsTableAnnotationComposer,
+      $$ChapterEmbeddingsTableCreateCompanionBuilder,
+      $$ChapterEmbeddingsTableUpdateCompanionBuilder,
+      (ChapterEmbedding, $$ChapterEmbeddingsTableReferences),
+      ChapterEmbedding,
+      PrefetchHooks Function({bool projectId, bool chapterId})
     >;
 typedef $$SettingsTableCreateCompanionBuilder = SettingsCompanion Function({
   required String key,
@@ -11921,6 +14239,10 @@ class $AppDatabaseManager {
       $$ParagraphsTableTableManager(_db, _db.paragraphs);
   $$AnnotationsTableTableManager get annotations =>
       $$AnnotationsTableTableManager(_db, _db.annotations);
+  $$CharacterEventsTableTableManager get characterEvents =>
+      $$CharacterEventsTableTableManager(_db, _db.characterEvents);
+  $$ChapterEmbeddingsTableTableManager get chapterEmbeddings =>
+      $$ChapterEmbeddingsTableTableManager(_db, _db.chapterEmbeddings);
   $$SettingsTableTableManager get settings =>
       $$SettingsTableTableManager(_db, _db.settings);
   $$LlmLogsTableTableManager get llmLogs =>
