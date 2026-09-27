@@ -8,8 +8,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/calibration/visual_assistant.dart';
 
 import '../../fakes/fake_ffmpeg_service.dart';
@@ -71,8 +71,19 @@ void main() {
 
   LlmService llm(VisionAdapter adapter) =>
       LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-        ..updateConfig(const ApiConfig(
-            baseUrl: 'https://x/v1', apiKey: 'k', modelVision: 'qwen-vl-test'));
+        ..updateRouting(const RoutingTable(
+          channels: [
+            ChannelRoute(
+                id: 0,
+                name: 'legacy',
+                baseUrl: 'https://x/v1',
+                apiKey: 'k',
+                enabled: true),
+          ],
+          slots: {
+            LlmSlot.vision: SlotBinding(channelId: 0, model: 'qwen-vl-test'),
+          },
+        ));
 
   test('抽帧时刻取台词中点；vision 请求体含图片 data URI 与候选名单；模型用 vision 配置', () async {
     final (charId, seg) = await seed();

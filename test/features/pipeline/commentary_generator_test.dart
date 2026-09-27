@@ -7,10 +7,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
+
+/// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
+const _route = ChannelRoute(
+    id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
+const _testRouting = RoutingTable(channels: [_route], slots: {});
 
 /// 按调用序返回预设 JSON 的假 LLM 适配器。
 class SeqAdapter implements HttpClientAdapter {
@@ -90,7 +95,7 @@ void main() {
       '{"digest":"..."}',
     ]);
     final llm = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
+      ..updateRouting(_testRouting);
     final id = await seed();
 
     await CommentaryGenerator(db: db, llm: llm, modelStandard: () => 'qwen-plus')
@@ -129,7 +134,7 @@ void main() {
       '不是JSON{{{', // 场景1 解说解析失败（兜底链耗尽）
     ]);
     final llm = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
+      ..updateRouting(_testRouting);
     final id = await seed();
 
     await CommentaryGenerator(db: db, llm: llm, modelStandard: () => 'qwen-plus')
@@ -145,7 +150,7 @@ void main() {
       commentary1.replaceFirst('余则成向站长汇报', '第二景'), '{"digest":"d2"}',
     ]);
     final llm2 = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter2)
-      ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
+      ..updateRouting(_testRouting);
     await CommentaryGenerator(db: db, llm: llm2, modelStandard: () => 'qwen-plus')
         .generate(id);
 
@@ -162,7 +167,7 @@ void main() {
       commentary1, '{"digest":"d"}',
     ]);
     final llm = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
+      ..updateRouting(_testRouting);
     final id = await seed();
     final progress = <int>[];
     await CommentaryGenerator(

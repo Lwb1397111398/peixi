@@ -96,8 +96,11 @@ void main() {
     });
 
     Future<void> seedLlmConfig() async {
-      await container.read(settingsRepoProvider).saveApiConfig(const ApiConfig(
-          baseUrl: 'https://llm.example/v1', apiKey: 'sk-test'));
+      // 渠道化后 _precheck 校验"存在可用渠道"；直接落一条渠道
+      await container.read(settingsRepoProvider).addChannel(
+          name: '测试渠道',
+          baseUrl: 'https://llm.example/v1',
+          apiKey: 'sk-test');
       // 本地识别模式：绕开云端所需的 OSS 配置校验
       await container
           .read(settingsRepoProvider)

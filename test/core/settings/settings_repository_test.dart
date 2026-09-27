@@ -17,31 +17,6 @@ void main() {
   });
   tearDown(() async => db.close());
 
-  test('ApiConfig 持久化往返：密钥入 secure、其余入 settings 表', () async {
-    await repo.saveApiConfig(const ApiConfig(
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      apiKey: 'sk-test-123',
-      modelCheap: 'qwen-flash',
-      modelStandard: 'qwen-plus',
-    ));
-    // 密钥绝不能出现在 settings 表
-    final rows = await db.select(db.settings).get();
-    final joined = rows.map((r) => '${r.key}=${r.value}').join(';');
-    expect(joined.contains('sk-test-123'), isFalse);
-    final cfg = await repo.loadApiConfig();
-    expect(cfg.apiKey, 'sk-test-123');
-    expect(cfg.baseUrl, ApiConfig.bailianBaseUrl);
-    expect(cfg.modelCheap, 'qwen-flash');
-    expect(cfg.modelStandard, 'qwen-plus');
-  });
-
-  test('空配置返回默认值', () async {
-    final cfg = await repo.loadApiConfig();
-    expect(cfg.baseUrl, ApiConfig.bailianBaseUrl);
-    expect(cfg.apiKey, '');
-    expect(cfg.isComplete, isFalse);
-  });
-
   test('OssConfig 与播放偏好持久化', () async {
     await repo.saveOssConfig(const OssConfig(
         bucket: 'b',

@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 
 /// 可编程假适配器：按顺序消费预设响应
 class FakeAdapter implements HttpClientAdapter {
@@ -48,11 +47,22 @@ void main() {
   setUp(() => db = AppDatabase(NativeDatabase.memory()));
   tearDown(() async => db.close());
 
-  ApiConfig cfg() => const ApiConfig(
-      baseUrl: 'https://example.com/v1',
-      apiKey: 'sk-x',
-      modelCheap: 'qwen-flash',
-      modelStandard: 'qwen-plus');
+  // 等价于旧 updateConfig(ApiConfig(baseUrl, apiKey, cheap, standard))：
+  // 单渠道 + summary/analysis 显式绑定（vision 走默认回落）。
+  RoutingTable cfg() => const RoutingTable(
+        channels: [
+          ChannelRoute(
+              id: 0,
+              name: 'legacy',
+              baseUrl: 'https://example.com/v1',
+              apiKey: 'sk-x',
+              enabled: true),
+        ],
+        slots: {
+          LlmSlot.summary: SlotBinding(channelId: 0, model: 'qwen-flash'),
+          LlmSlot.analysis: SlotBinding(channelId: 0, model: 'qwen-plus'),
+        },
+      );
 
   (Dio, FakeAdapter) dioWith(List<TestResp> rs) {
     final adapter = FakeAdapter(rs);
@@ -61,7 +71,7 @@ void main() {
 
   test('chat 成功：Bearer 头、模型分层、usage 落 llm_logs', () async {
     final (dio, adapter) = dioWith([TestResp(200, chatBody('你好'))]);
-    final svc = LlmService(dio: dio, db: db)..updateConfig(cfg());
+    final svc = LlmService(dio: dio, db: db)..updateRouting(cfg());
     final out = await svc.chat(const [
       {'role': 'user', 'content': 'hi'}
     ], purpose: '测试');
@@ -78,7 +88,7 @@ void main() {
 
   test('cheap 分层用 qwen-flash，jsonMode 带 response_format', () async {
     final (dio, adapter) = dioWith([TestResp(200, chatBody('{}'))]);
-    final svc = LlmService(dio: dio, db: db)..updateConfig(cfg());
+    final svc = LlmService(dio: dio, db: db)..updateRouting(cfg());
     await svc.chatJson(const [
       {'role': 'user', 'content': '输出 json'}
     ], slot: LlmSlot.summary, purpose: '映射');
@@ -93,7 +103,7 @@ void main() {
       TestResp(200, chatBody('ok')),
     ]);
     final svc = LlmService(dio: dio, db: db, backoffBase: Duration.zero)
-      ..updateConfig(cfg());
+      ..updateRouting(cfg());
     expect(
         await svc.chat(const [
           {'role': 'user', 'content': 'x'}
@@ -104,7 +114,7 @@ void main() {
   test('非重试错误直接抛 LlmException', () async {
     final (dio, _) = dioWith([TestResp(401, '{"error":{"message":"bad key"}}')]);
     final svc = LlmService(dio: dio, db: db, backoffBase: Duration.zero)
-      ..updateConfig(cfg());
+      ..updateRouting(cfg());
     await expectLater(
         svc.chat(const [
           {'role': 'user', 'content': 'x'}
@@ -117,7 +127,7 @@ void main() {
     final (dio, _) = dioWith([
       TestResp(200, chatBody('好的，结果如下：\n```json\n{"a":1}\n```\n完毕'))
     ]);
-    final svc = LlmService(dio: dio, db: db)..updateConfig(cfg());
+    final svc = LlmService(dio: dio, db: db)..updateRouting(cfg());
     expect(
         await svc.chatJson(const [
           {'role': 'user', 'content': 'x'}
@@ -131,7 +141,7 @@ void main() {
       TestResp(200, chatBody('{"a": 1}')), // 修复后的合法 JSON
     ]);
     final svc = LlmService(dio: dio, db: db, backoffBase: Duration.zero)
-      ..updateConfig(cfg());
+      ..updateRouting(cfg());
     expect(
         await svc.chatJson(const [
           {'role': 'user', 'content': 'x'}
@@ -146,18 +156,12 @@ void main() {
       TestResp(200, chatBody('still-not-json')),
     ]);
     final svc = LlmService(dio: dio, db: db, backoffBase: Duration.zero)
-      ..updateConfig(cfg());
+      ..updateRouting(cfg());
     await expectLater(
         svc.chatJson(const [
           {'role': 'user', 'content': 'x'}
         ], purpose: 't'),
         throwsA(isA<LlmJsonException>()));
-  });
-
-  test('testConnection 走 GET /models', () async {
-    final (dio, _) = dioWith([TestResp(200, '{"data":[{"id":"qwen-plus"}]}')]);
-    final svc = LlmService(dio: dio, db: db)..updateConfig(cfg());
-    expect(await svc.testConnection(), contains('qwen-plus'));
   });
 
   test('槽位解析：请求发到绑定渠道的 baseUrl/模型/key', () async {

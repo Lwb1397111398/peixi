@@ -56,41 +56,6 @@ class SettingsRepository {
         SettingsCompanion.insert(key: key, value: value));
   }
 
-  Future<ApiConfig> loadApiConfig() async => ApiConfig(
-        baseUrl: await _get(_kBaseUrl) ?? ApiConfig.bailianBaseUrl,
-        apiKey: await _secure.read(key: _sApiKey) ?? '',
-        modelCheap: await _get(_kModelCheap) ?? 'qwen-flash',
-        modelStandard: await _get(_kModelStandard) ?? 'qwen-plus',
-        modelVision: await _get(_kModelVision) ?? 'qwen-vl-plus',
-      );
-
-  Future<void> saveApiConfig(ApiConfig c) async {
-    await _set(_kBaseUrl, c.baseUrl);
-    await _set(_kModelCheap, c.modelCheap);
-    await _set(_kModelStandard, c.modelStandard);
-    await _set(_kModelVision, c.modelVision);
-    await _secure.write(key: _sApiKey, value: c.apiKey);
-    // 渠道化过渡：旧设置页保存时同步回首个渠道与三槽位，避免重启后被
-    // 冻结的渠道表回退（Group D 重写设置页后本段随迁移期一并移除）。
-    if (await _get(_kChannelsMigrated) != null) {
-      final channels = await loadChannels();
-      if (channels.isNotEmpty) {
-        final ch = channels.first;
-        await updateChannel(ch.id,
-            name: ch.name,
-            baseUrl: c.baseUrl,
-            apiKey: c.apiKey,
-            enabled: ch.enabled);
-        await saveSlot(LlmSlot.summary,
-            channelId: ch.id, model: c.modelCheap);
-        await saveSlot(LlmSlot.analysis,
-            channelId: ch.id, model: c.modelStandard);
-        await saveSlot(LlmSlot.vision,
-            channelId: ch.id, model: c.modelVision);
-      }
-    }
-  }
-
   Future<OssConfig?> loadOssConfig() async {
     final bucket = await _get(_kOssBucket);
     final endpoint = await _get(_kOssEndpoint);

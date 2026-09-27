@@ -13,7 +13,6 @@ import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 
 /// 实测（真实原生链路，Windows 桌面运行）：
@@ -119,8 +118,18 @@ void main() {
     // LLM：真实请求 dashscope，无效 key → LlmException（非崩溃）
     final db = AppDatabase(NativeDatabase.memory());
     final llm = LlmService(db: db, dio: Dio());
-    llm.updateConfig(const ApiConfig(
-        baseUrl: ApiConfig.bailianBaseUrl, apiKey: 'sk-invalid-e2e-key'));
+    llm.updateRouting(const RoutingTable(
+      channels: [
+        ChannelRoute(
+            id: 0,
+            name: 'legacy',
+            // 百炼 OpenAI 兼容端点（原 ApiConfig.bailianBaseUrl）
+            baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            apiKey: 'sk-invalid-e2e-key',
+            enabled: true),
+      ],
+      slots: {},
+    ));
     Object? caught;
     try {
       await llm.chat(

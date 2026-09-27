@@ -3,7 +3,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 
 void main() {
@@ -15,6 +14,25 @@ void main() {
     repo = SettingsRepository(db, const FlutterSecureStorage());
   });
   tearDown(() async => db.close());
+
+  /// 直写旧单配置原始键（_migrateLegacyConfigIfNeeded 的读取对象），
+  /// 模拟渠道化之前的老用户存量数据。
+  Future<void> seedLegacyConfig({
+    String baseUrl = 'https://old/v1',
+    String apiKey = 'sk-old',
+    String cheap = 'flash-x',
+    String standard = 'plus-x',
+    String vision = 'vl-x',
+  }) async {
+    Future<void> put(String key, String value) => db
+        .into(db.settings)
+        .insert(SettingsCompanion.insert(key: key, value: value));
+    if (baseUrl.isNotEmpty) await put('llm.base_url', baseUrl);
+    await put('llm.model_cheap', cheap);
+    await put('llm.model_standard', standard);
+    await put('llm.model_vision', vision);
+    await const FlutterSecureStorage().write(key: 'llm.api_key', value: apiKey);
+  }
 
   test('渠道增改删 + KEY 落 secure storage', () async {
     final id = await repo.addChannel(
@@ -42,12 +60,7 @@ void main() {
   });
 
   test('旧单配置首启迁移为默认渠道+三槽位，且不重复迁移', () async {
-    await repo.saveApiConfig(const ApiConfig(
-        baseUrl: 'https://old/v1',
-        apiKey: 'sk-old',
-        modelCheap: 'flash-x',
-        modelStandard: 'plus-x',
-        modelVision: 'vl-x'));
+    await seedLegacyConfig();
     var r = await repo.loadRouting();
     expect(r.channels.single.baseUrl, 'https://old/v1');
     expect(r.channels.single.apiKey, 'sk-old');
@@ -64,21 +77,19 @@ void main() {
     expect(r.slots, isEmpty);
   });
 
-  test('迁移后经旧设置页 saveApiConfig 编辑：同步回渠道与三槽位，重启不回退', () async {
-    await repo.saveApiConfig(const ApiConfig(
-        baseUrl: 'https://old/v1',
-        apiKey: 'sk-old',
-        modelCheap: 'flash-x',
-        modelStandard: 'plus-x',
-        modelVision: 'vl-x'));
+  test('迁移后经渠道 API 编辑：同步落库，重启不回退', () async {
+    await seedLegacyConfig();
     await repo.loadRouting(); // 触发一次性迁移（此后旗标已置位）
-    // 旧设置页编辑并保存（saveApiConfig 路径）
-    await repo.saveApiConfig(const ApiConfig(
+    // 设置页编辑渠道与三槽位（updateChannel/saveSlot 路径）
+    final id = (await repo.loadChannels()).single.id;
+    await repo.updateChannel(id,
+        name: '默认渠道',
         baseUrl: 'https://new/v1',
         apiKey: 'sk-new',
-        modelCheap: 'flash-n',
-        modelStandard: 'plus-n',
-        modelVision: 'vl-n'));
+        enabled: true);
+    await repo.saveSlot(LlmSlot.summary, channelId: id, model: 'flash-n');
+    await repo.saveSlot(LlmSlot.analysis, channelId: id, model: 'plus-n');
+    await repo.saveSlot(LlmSlot.vision, channelId: id, model: 'vl-n');
     // 模拟重启：repo 无内存状态，再次 loadRouting 等价重启后装配
     final r = await repo.loadRouting();
     expect(r.channels.single.baseUrl, 'https://new/v1');
@@ -87,32 +98,8 @@ void main() {
     expect(r.slots[LlmSlot.summary]!.model, 'flash-n');
     expect(r.slots[LlmSlot.analysis]!.model, 'plus-n');
     expect(r.slots[LlmSlot.vision]!.model, 'vl-n');
-    // 槽位仍绑定到迁移出的那条渠道，而不是悬空回落
+    // 槽位仍绑定到那条渠道，而不是悬空回落
     expect(r.slots[LlmSlot.analysis]!.channelId, r.channels.single.id);
-  });
-
-  test('迁移后删光渠道再经旧设置页保存：不崩溃、不复活渠道，仅旧键更新', () async {
-    await repo.saveApiConfig(const ApiConfig(
-        baseUrl: 'https://old/v1',
-        apiKey: 'sk-old',
-        modelCheap: 'flash-x',
-        modelStandard: 'plus-x',
-        modelVision: 'vl-x'));
-    final r0 = await repo.loadRouting(); // 触发迁移
-    await repo.deleteChannel(r0.channels.single.id);
-    await repo.saveApiConfig(const ApiConfig(
-        baseUrl: 'https://new/v1',
-        apiKey: 'sk-new',
-        modelCheap: 'flash-n',
-        modelStandard: 'plus-n',
-        modelVision: 'vl-n'));
-    final r = await repo.loadRouting();
-    expect(r.channels, isEmpty);
-    expect(r.slots, isEmpty);
-    // 旧键照常更新，旧设置页自身读数正确
-    final cfg = await repo.loadApiConfig();
-    expect(cfg.baseUrl, 'https://new/v1');
-    expect(cfg.apiKey, 'sk-new');
   });
 
   test('损坏的槽位串被丢弃：loadRouting 不抛异常也不含该槽位', () async {

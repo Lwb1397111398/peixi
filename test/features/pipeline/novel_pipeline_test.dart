@@ -7,11 +7,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/novel_pipeline.dart';
+
+/// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
+const _route = ChannelRoute(
+    id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
 
 /// 按请求顺序返回预置响应的假适配器（每次调用消耗一个脚本）。
 class ScriptedAdapter implements HttpClientAdapter {
@@ -195,8 +199,10 @@ void main() {
 
     LlmService llm(ScriptedAdapter adapter) =>
         LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-          ..updateConfig(const ApiConfig(
-              baseUrl: 'https://x/v1', apiKey: 'k', modelCheap: 'flash'));
+          ..updateRouting(const RoutingTable(
+            channels: [_route],
+            slots: {LlmSlot.summary: SlotBinding(channelId: 0, model: 'flash')},
+          ));
 
     test('逐章提取：人物落库、章摘要落库、名单滚动传递（指代一致）', () async {
       final (id, _) = await seedWithChapters();

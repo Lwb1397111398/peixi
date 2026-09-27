@@ -226,8 +226,10 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
   /// 返回 null 表示通过。
   Future<String?> _precheck({bool needOss = false}) async {
     final repo = ref.read(settingsRepoProvider);
-    final api = await repo.loadApiConfig();
-    if (!api.isComplete) return '尚未配置 LLM API Key，请先到设置页配置';
+    final routing = await repo.loadRouting();
+    if (!routing.channels.any((c) => c.usable)) {
+      return '尚未添加模型渠道，请先到设置页「模型渠道」添加';
+    }
     if (needOss && await repo.loadAsrMode() == AsrMode.cloud) {
       final oss = await repo.loadOssConfig();
       if (oss == null || !oss.isComplete) {

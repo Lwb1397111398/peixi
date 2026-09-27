@@ -330,10 +330,14 @@ class PipelineEngine {
       }
       norm = await localFn(await _ensureWavAudio(p, id, meta));
     } else {
-      final apiCfg = await _settings.loadApiConfig();
-      if (!apiCfg.isComplete) {
-        throw PipelineException('未配置 LLM/ASR API Key（设置页）');
+      // 云端 ASR 复用首个可用渠道的 KEY（历史上与 LLM 共用同一 DashScope
+      // KEY；渠道化后不再有全局单配置）。
+      final routing = await _settings.loadRouting();
+      final usable = routing.channels.where((c) => c.usable).toList();
+      if (usable.isEmpty) {
+        throw PipelineException('未配置 LLM/ASR API Key（设置页 → 模型渠道）');
       }
+      final asrApiKey = usable.first.apiKey;
       final ossCfg = await _settings.loadOssConfig();
       if (ossCfg == null || !ossCfg.isComplete) {
         throw PipelineException('未配置 OSS 中转桶');
@@ -345,7 +349,7 @@ class PipelineEngine {
           throw PipelineException('缺少 OSS 对象键，请重试');
         }
         final url = oss.signedGetUrl(meta.ossKey!);
-        meta.asrTaskId = await _asr.submit(apiCfg.apiKey, url);
+        meta.asrTaskId = await _asr.submit(asrApiKey, url);
         // 立即落盘：之后任意时刻被杀都能凭 task_id 续轮询
         meta = await _saveMeta(id, meta);
         p = await _project(id);
@@ -355,7 +359,7 @@ class PipelineEngine {
       String? transcriptionUrl;
       while (true) {
         if (_cancelRequested.contains(id)) throw const PipelineCancelled();
-        final r = await _asr.poll(apiCfg.apiKey, meta.asrTaskId!);
+        final r = await _asr.poll(asrApiKey, meta.asrTaskId!);
         if (r.phase == AsrTaskPhase.succeeded) {
           transcriptionUrl = r.transcriptionUrl;
           break;

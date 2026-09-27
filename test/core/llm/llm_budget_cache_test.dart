@@ -6,8 +6,8 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 
 /// 恒定返回合法 JSON 的桩适配器（带调用计数）。
 class StubAdapter implements HttpClientAdapter {
@@ -37,10 +37,23 @@ class StubAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
+// 单可用渠道路由表：summary/analysis/vision 未显式绑定时按默认模型回落
+// （与旧 updateConfig(ApiConfig(...)) 的默认模型一致）。
+const _testRouting = RoutingTable(
+  channels: [
+    ChannelRoute(
+        id: 0,
+        name: 'legacy',
+        baseUrl: 'https://llm.example/v1',
+        apiKey: 'sk-test',
+        enabled: true),
+  ],
+  slots: {},
+);
+
 LlmService makeSvc(AppDatabase db, HttpClientAdapter adapter) =>
     LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(
-          baseUrl: 'https://llm.example/v1', apiKey: 'sk-test'));
+      ..updateRouting(_testRouting);
 
 void main() {
   late AppDatabase db;
@@ -48,9 +61,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    llm = LlmService(db: db)
-      ..updateConfig(const ApiConfig(
-          baseUrl: 'https://llm.example/v1', apiKey: 'sk-test'));
+    llm = LlmService(db: db)..updateRouting(_testRouting);
   });
 
   tearDown(() => db.close());

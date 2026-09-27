@@ -59,8 +59,10 @@ void main() {
     db = AppDatabase(NativeDatabase.memory());
     FlutterSecureStorage.setMockInitialValues({});
     settings = SettingsRepository(db, const FlutterSecureStorage());
-    await settings.saveApiConfig(const ApiConfig(
-        baseUrl: 'https://llm.example/v1', apiKey: 'sk-test'));
+    await settings.addChannel(
+        name: '测试渠道',
+        baseUrl: 'https://llm.example/v1',
+        apiKey: 'sk-test');
     await settings.saveOssConfig(const OssConfig(
         bucket: 'b',
         endpoint: 'oss-cn-beijing.aliyuncs.com',

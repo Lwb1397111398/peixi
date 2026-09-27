@@ -26,9 +26,6 @@ final llmServiceProvider = Provider<LlmService>((ref) {
   Future(() async {
     try {
       final repo = ref.read(settingsRepoProvider);
-      // 兼容桥：旧设置页/测试连接仍读单配置（Group D 重写设置页后移除）；
-      // 必须先于 updateRouting——updateConfig 内部会用单渠道路由表覆盖 _routing
-      svc.updateConfig(await repo.loadApiConfig());
       svc.updateRouting(await repo.loadRouting());
       final (conc, minMs) = await repo.loadLlmLimits();
       svc.gate.updateLimits(

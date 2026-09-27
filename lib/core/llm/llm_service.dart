@@ -6,7 +6,6 @@ import 'package:dio/dio.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_gate.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
-import 'package:peixi/core/settings/api_config.dart';
 
 class LlmException implements Exception {
   LlmException(this.message, {this.statusCode});
@@ -41,7 +40,6 @@ class LlmService {
   final Dio dio;
   final AppDatabase db;
   final Duration backoffBase;
-  ApiConfig? _config;
   RoutingTable? _routing;
 
   /// 管线代码入口：启动与设置变更时注入最新路由表。
@@ -49,27 +47,6 @@ class LlmService {
 
   /// 当前槽位解析出的模型名（评论落库 model 字段用；未配置返回 null）。
   String? modelOf(LlmSlot slot) => _routing?.resolve(slot)?.model;
-
-  /// 兼容垫片：旧单配置 → 单渠道路由表（仅旧测试/迁移期使用，Group D 移除）。
-  void updateConfig(ApiConfig config) {
-    _config = config; // 供已废弃的 config getter 与 testConnection 过渡期使用
-    updateRouting(RoutingTable(
-      channels: [
-        ChannelRoute(
-            id: 0,
-            name: 'legacy',
-            baseUrl: config.baseUrl,
-            apiKey: config.apiKey,
-            enabled: true),
-      ],
-      slots: {
-        LlmSlot.summary: SlotBinding(channelId: 0, model: config.modelCheap),
-        LlmSlot.analysis:
-            SlotBinding(channelId: 0, model: config.modelStandard),
-        LlmSlot.vision: SlotBinding(channelId: 0, model: config.modelVision),
-      },
-    ));
-  }
 
   /// 并发/频控闸门：所有 LLM 调用共用，防止压垮限速中转站。
   final LlmGate gate = LlmGate();
@@ -328,24 +305,6 @@ class LlmService {
       } catch (_) {}
     }
     return null;
-  }
-
-  /// 设置页〔测试连接〕：GET /models
-  Future<String> testConnection() async {
-    final cfg = _config;
-    if (cfg == null || !cfg.isComplete) throw LlmException('未配置 API');
-    final resp = await dio.get('${cfg.baseUrl}/models',
-        options: Options(
-          validateStatus: (_) => true,
-          headers: {'Authorization': 'Bearer ${cfg.apiKey}'},
-        ));
-    if (resp.statusCode != 200) {
-      throw LlmException('HTTP ${resp.statusCode}', statusCode: resp.statusCode);
-    }
-    final data = (resp.data as Map)['data'] as List;
-    if (data.isEmpty) return '连接成功，但模型列表为空';
-    final first = ((data[0] as Map)['id'] ?? '?').toString();
-    return '连接成功，可用模型 ${data.length} 个（如 $first）';
   }
 
   /// 语义向量（OpenAI 兼容 /embeddings）。语义回忆模块专用；未绑定 embedding

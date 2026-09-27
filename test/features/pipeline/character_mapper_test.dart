@@ -7,10 +7,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
+import 'package:peixi/core/llm/llm_routing.dart';
 import 'package:peixi/core/llm/llm_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
+
+/// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
+const _route = ChannelRoute(
+    id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
+const _testRouting = RoutingTable(channels: [_route], slots: {});
 
 class FakeAdapter implements HttpClientAdapter {
   FakeAdapter(this.body);
@@ -75,8 +80,10 @@ void main() {
         '{"speaker_id":"SPEAKER_00","name":"余则成","confidence":0.9,"evidence":"自称","is_major":true},'
         '{"speaker_id":"SPEAKER_01","name":"未知·声音1","confidence":0.3,"evidence":"语气","is_major":false}]}');
     final llm = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(
-          baseUrl: 'https://x/v1', apiKey: 'k', modelCheap: 'flash'));
+      ..updateRouting(const RoutingTable(
+        channels: [_route],
+        slots: {LlmSlot.summary: SlotBinding(channelId: 0, model: 'flash')},
+      ));
     final id = await seed();
     await CharacterMapper(db: db, llm: llm).map(id);
 
@@ -107,7 +114,7 @@ void main() {
         '{"speaker_id":"SPEAKER_00","name":"余则成"},'
         '{"speaker_id":"","name":"无名"}]}');
     final llm = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
+      ..updateRouting(_testRouting);
     final id = await seed();
     await CharacterMapper(db: db, llm: llm).map(id);
     final chars = await db.select(db.characters).get();
@@ -118,7 +125,7 @@ void main() {
   test('空结果抛异常（引擎置 FAILED 可重试）', () async {
     final adapter = FakeAdapter('{"characters":[]}');
     final llm = LlmService(db: db, dio: Dio()..httpClientAdapter = adapter)
-      ..updateConfig(const ApiConfig(baseUrl: 'https://x/v1', apiKey: 'k'));
+      ..updateRouting(_testRouting);
     final id = await seed();
     await expectLater(
         CharacterMapper(db: db, llm: llm).map(id), throwsException);
