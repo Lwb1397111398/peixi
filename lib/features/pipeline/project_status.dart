@@ -31,14 +31,6 @@ ProjectStatus entryStatusOfStage(String stage) => switch (stage) {
       _ => ProjectStatus.imported,
     };
 
-/// 小说管线的 FAILED 回退映射（N2=map / N3=commentary / N4=finalize）。
-ProjectStatus novelEntryStatusOfStage(String stage) => switch (stage) {
-      'map' => ProjectStatus.imported,
-      'commentary' => ProjectStatus.mapped,
-      'finalize' => ProjectStatus.commentaryDone,
-      _ => ProjectStatus.imported,
-    };
-
 /// UI 进度条的阶段标签（媒体库卡片显示）。
 String stageLabel(String stage) => switch (stage) {
       'subtitle' => '字幕提取',

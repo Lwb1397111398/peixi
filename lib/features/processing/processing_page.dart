@@ -1,12 +1,15 @@
+import 'package:drift/drift.dart' show ArithmeticAggregates;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
+import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 import 'package:peixi/features/player/player_page.dart';
 import 'package:peixi/features/reader/reader_page.dart';
+import 'package:peixi/ui/widgets/app_badge.dart';
 import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/providers.dart';
 
@@ -29,12 +32,6 @@ class ProcessingPage extends ConsumerWidget {
     ('calibration', '人工校准'),
     ('segment', '场景切分'),
     ('commentary', '逐场景解说生成'),
-    ('finalize', '收尾'),
-  ];
-
-  static const _novelStages = [
-    ('map', '人物提取与章节摘要'),
-    ('commentary', '逐段批注生成'),
     ('finalize', '收尾'),
   ];
 
@@ -73,7 +70,6 @@ class ProcessingPage extends ConsumerWidget {
           final failedStage = p.failedStage;
           final busy = state?.busy ?? false;
           final isNovel = p.type == 'novel';
-          final stages = isNovel ? _novelStages : _videoStages;
           final semantic = context.semanticColors;
           final tt = Theme.of(context).textTheme;
 
@@ -142,33 +138,36 @@ class ProcessingPage extends ConsumerWidget {
                       value: state!.progress, minHeight: 5),
                 ),
               ],
-              if (state?.detail != null) ...[
+              if (!isNovel && state?.detail != null) ...[
                 const SizedBox(height: Space.xs),
                 Text(state!.detail!, style: tt.bodySmall),
               ],
               const SizedBox(height: Space.xl),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                      Space.xl, Space.l, Space.xl, Space.xs),
-                  child: Column(
-                    children: [
-                      for (var i = 0; i < stages.length; i++)
-                        _stageRow(
-                          context,
-                          stages[i].$1,
-                          stages[i].$2,
-                          status,
-                          state,
-                          failedStage,
-                          isNovel,
-                          localAsr: localAsr,
-                          isLast: i == stages.length - 1,
-                        ),
-                    ],
+              if (isNovel)
+                // 两遍式管线（§9）：小说泳道以 DB 为真相源，事件流只触发重查
+                _NovelSwimlanes(project: p)
+              else
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        Space.xl, Space.l, Space.xl, Space.xs),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < _videoStages.length; i++)
+                          _stageRow(
+                            context,
+                            _videoStages[i].$1,
+                            _videoStages[i].$2,
+                            status,
+                            state,
+                            failedStage,
+                            localAsr: localAsr,
+                            isLast: i == _videoStages.length - 1,
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
               if (status == ProjectStatus.failed)
                 Padding(
                   padding: const EdgeInsets.only(top: Space.l),
@@ -218,19 +217,22 @@ class ProcessingPage extends ConsumerWidget {
 
   String _subtitleText(Project p) => p.sourcePath;
 
+  /// 小说失败阶段为两遍式新口径 map/digest/annotate（§8 错误表）；
+  /// 旧存量的 commentary/finalize 走通用 stageLabel 兜底。
   String _failedStageLabel(Project p) {
     final stage = p.failedStage ?? '';
     if (p.type == 'novel') {
       return switch (stage) {
-        'map' => '人物提取',
-        'commentary' => '批注生成',
+        'map' => '地图',
+        'digest' => '摘要快照',
+        'annotate' => '批注',
         _ => stageLabel(stage),
       };
     }
     return stageLabel(stage);
   }
 
-  /// 竖向时间线一行：左侧节点+连线，右侧标签与状态提示
+  /// 竖向时间线一行：左侧节点+连线，右侧标签与状态提示（仅视频分支使用）
   Widget _stageRow(
       BuildContext context,
       String key,
@@ -238,16 +240,15 @@ class ProcessingPage extends ConsumerWidget {
       ProjectStatus status,
       PipelineState? state,
       String? failedStage,
-      bool isNovel,
       {required bool localAsr,
       required bool isLast}) {
     final semantic = context.semanticColors;
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     // 本地识别模式下上传阶段不执行：显示为中性"跳过"节点，连线跟随后续阶段
-    final skipped = key == 'upload' && !isNovel && localAsr;
+    final skipped = key == 'upload' && localAsr;
     final reached =
-        !skipped && _stageReached(key, status, failedStage, isNovel: isNovel);
+        !skipped && _stageReached(key, status, failedStage);
     final active = state?.busy == true && state?.stage == key;
     final failed = failedStage == key && status == ProjectStatus.failed;
     final waitingGate =
@@ -263,8 +264,7 @@ class ProcessingPage extends ConsumerWidget {
                 : reached
                     ? semantic.success
                     : cs.outlineVariant;
-    final passedThrough = skipped &&
-        _stageReached('asr', status, failedStage, isNovel: isNovel);
+    final passedThrough = skipped && _stageReached('asr', status, failedStage);
     final lineColor = reached || passedThrough
         ? semantic.success
         : cs.outlineVariant;
@@ -366,8 +366,7 @@ class ProcessingPage extends ConsumerWidget {
   }
 
   /// 该阶段是否已完成（按状态机位置推断）。
-  bool _stageReached(String stage, ProjectStatus status, String? failedStage,
-      {bool isNovel = false}) {
+  bool _stageReached(String stage, ProjectStatus status, String? failedStage) {
     const order = [
       ProjectStatus.imported,
       ProjectStatus.audioReady,
@@ -384,7 +383,6 @@ class ProcessingPage extends ConsumerWidget {
       'subtitle' || 'audio' => ProjectStatus.audioReady,
       'upload' => ProjectStatus.uploaded,
       'asr' => ProjectStatus.asrDone,
-      // 小说 N2 完成即 MAPPED（视频的 map 完成同样落在 MAPPED）
       'map' => ProjectStatus.mapped,
       'calibration' => ProjectStatus.calibrated,
       'segment' => ProjectStatus.segmented,
@@ -393,10 +391,180 @@ class ProcessingPage extends ConsumerWidget {
       _ => ProjectStatus.ready,
     };
     final cur = status == ProjectStatus.failed
-        ? (isNovel
-            ? novelEntryStatusOfStage(failedStage ?? '')
-            : entryStatusOfStage(failedStage ?? ''))
+        ? entryStatusOfStage(failedStage ?? '')
         : status;
     return order.indexOf(stageStatus) <= order.indexOf(cur);
+  }
+}
+
+/// 小说双泳道进度卡（设计文档 §9；DB 为真相源，管线事件流只当刷新信号）：
+/// 地图/批注两泳道按章实时聚合、领先阅读徽章、token 花费、降批/取消提示、
+/// 单章重批入口。重试按钮（FAILED）仍由页面级既有路径承担。
+class _NovelSwimlanes extends ConsumerStatefulWidget {
+  const _NovelSwimlanes({required this.project});
+  final Project project;
+
+  @override
+  ConsumerState<_NovelSwimlanes> createState() => _NovelSwimlanesState();
+}
+
+class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
+  final _chapterCtrl = TextEditingController();
+  bool _loading = true;
+  int _total = 0;
+  int _mapDone = 0;
+  int _annotDone = 0;
+  int _tokens = 0;
+  int _readingIdx = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  @override
+  void dispose() {
+    _chapterCtrl.dispose();
+    super.dispose();
+  }
+
+  /// 页面加载与每次 controller state 变化时重查（事件只当刷新信号，
+  /// 显示数值一律以 DB 复算为准，不信任事件里的文案/计数）。
+  Future<void> _reload() async {
+    final db = ref.read(databaseProvider);
+    final pid = widget.project.id;
+    final chapters = await (db.select(db.chapters)
+          ..where((t) => t.projectId.equals(pid)))
+        .get();
+    final p = await (db.select(db.projects)..where((t) => t.id.equals(pid)))
+        .getSingleOrNull();
+    final promptSum = db.llmLogs.promptTokens.sum();
+    final completionSum = db.llmLogs.completionTokens.sum();
+    final tokenRow = await (db.selectOnly(db.llmLogs)
+          ..addColumns([promptSum, completionSum])
+          ..where(db.llmLogs.projectId.equals(pid)))
+        .getSingle();
+    if (!mounted) return;
+    setState(() {
+      _total = chapters.length;
+      _mapDone = chapters.where((c) => c.mapDone).length;
+      _annotDone = chapters.where((c) => c.annotDone).length;
+      _tokens =
+          (tokenRow.read(promptSum) ?? 0) + (tokenRow.read(completionSum) ?? 0);
+      _readingIdx = p == null
+          ? 0
+          : (ProjectMeta.fromJson(p.metaJson).readingProgress?.chapterIdx ?? 0);
+      _loading = false;
+    });
+  }
+
+  Future<void> _reannotate(int chapterIdx) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(pipelineControllerProvider.notifier)
+          .reannotateChapter(widget.project.id, chapterIdx);
+      await _reload();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('重批失败：$e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 事件流只触发重查（防抖不必要：重查是本地 DB 读，代价远低于 LLM 调用）
+    ref.listen(pipelineControllerProvider, (prev, next) {
+      if (prev?[widget.project.id] != next[widget.project.id]) _reload();
+    });
+    final state = ref.watch(pipelineControllerProvider)[widget.project.id];
+    final busy = state?.busy ?? false;
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final lead = _annotDone - _readingIdx;
+    final chapterNum = int.tryParse(_chapterCtrl.text.trim());
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(Space.xl, Space.l, Space.xl, Space.l),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: Space.l),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else ...[
+              _swimlane(context, '地图', _mapDone, _total),
+              const SizedBox(height: Space.m),
+              _swimlane(context, '批注', _annotDone, _total),
+              const SizedBox(height: Space.m),
+              Wrap(
+                spacing: Space.s,
+                runSpacing: Space.xs,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (lead > 0) AppBadge('领先阅读 $lead 章', tone: BadgeTone.success),
+                  Text('本书已耗 token $_tokens',
+                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                ],
+              ),
+            ],
+            if (state?.detail != null) ...[
+              const SizedBox(height: Space.xs),
+              Text(state!.detail!,
+                  style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+            ],
+            const SizedBox(height: Space.l),
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _chapterCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '章号（0 起）',
+                    isDense: true,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: Space.s),
+              FilledButton(
+                // 调度器运行中拒绝重批（controller 侧同样有防线）
+                onPressed:
+                    busy || chapterNum == null ? null : () => _reannotate(chapterNum),
+                child: const Text('重新批注此章'),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 泳道一行：标签 + 完成度 + 进度条（沿用视频时间线的视觉密度）
+  Widget _swimlane(BuildContext context, String label, int done, int total) {
+    final tt = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Text('$label $done/$total 章', style: tt.titleSmall),
+          const SizedBox(width: Space.s),
+          if (done >= total && total > 0)
+            Icon(Icons.check_circle, size: 15, color: cs.primary),
+        ]),
+        const SizedBox(height: Space.xs),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: total == 0 ? null : done / total,
+            minHeight: 5,
+          ),
+        ),
+      ],
+    );
   }
 }
