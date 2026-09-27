@@ -49,6 +49,15 @@ class PipelineCancelled implements Exception {
   String toString() => '已取消';
 }
 
+/// 阶段级失败（调度器抛出）：引擎按 stage 落 FAILED + failed_stage。
+class PipelineStageException implements Exception {
+  PipelineStageException(this.stage, this.cause);
+  final String stage;
+  final Object cause;
+  @override
+  String toString() => '阶段 $stage 失败：$cause';
+}
+
 /// 视频处理状态机（设计稿第四节 S1-S10）。
 /// projects.status 为唯一事实源：每阶段成功即落盘，任一阶段失败置
 /// FAILED+failed_stage，retry 回退到该阶段入口状态重跑；ASR 提交后
