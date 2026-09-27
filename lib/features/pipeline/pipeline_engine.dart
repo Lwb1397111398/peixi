@@ -330,14 +330,18 @@ class PipelineEngine {
       }
       norm = await localFn(await _ensureWavAudio(p, id, meta));
     } else {
-      // 云端 ASR 复用首个可用渠道的 KEY（历史上与 LLM 共用同一 DashScope
-      // KEY；渠道化后不再有全局单配置）。
+      // 云端 ASR 复用模型渠道的 KEY（历史上与 LLM 共用同一 DashScope KEY）：
+      // 优选用 DashScope 域名的渠道——ASR 是百炼服务，用中转站 KEY 会鉴权失败；
+      // 没有 DashScope 渠道时回落首个可用渠道。
       final routing = await _settings.loadRouting();
       final usable = routing.channels.where((c) => c.usable).toList();
       if (usable.isEmpty) {
         throw PipelineException('未配置 LLM/ASR API Key（设置页 → 模型渠道）');
       }
-      final asrApiKey = usable.first.apiKey;
+      final dashscope =
+          usable.where((c) => c.baseUrl.contains('dashscope')).toList();
+      final asrApiKey = (dashscope.isNotEmpty ? dashscope.first : usable.first)
+          .apiKey;
       final ossCfg = await _settings.loadOssConfig();
       if (ossCfg == null || !ossCfg.isComplete) {
         throw PipelineException('未配置 OSS 中转桶');

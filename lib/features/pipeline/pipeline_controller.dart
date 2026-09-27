@@ -227,8 +227,11 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
   Future<String?> _precheck({bool needOss = false}) async {
     final repo = ref.read(settingsRepoProvider);
     final routing = await repo.loadRouting();
-    if (!routing.channels.any((c) => c.usable)) {
+    if (routing.channels.isEmpty) {
       return '尚未添加模型渠道，请先到设置页「模型渠道」添加';
+    }
+    if (!routing.channels.any((c) => c.usable)) {
+      return '渠道未填写完整（缺少 BASE_URL 或 KEY），请到设置页「模型渠道」检查补全';
     }
     if (needOss && await repo.loadAsrMode() == AsrMode.cloud) {
       final oss = await repo.loadOssConfig();

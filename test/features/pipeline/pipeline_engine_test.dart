@@ -153,6 +153,32 @@ void main() {
         1);
   });
 
+  test('云端 ASR 的 KEY 优先取 DashScope 渠道，而非首个可用渠道', () async {
+    // setUp 里已加首个可用渠道（中转站 llm.example）；再补一条 DashScope 渠道
+    await settings.addChannel(
+        name: '百炼',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKey: 'sk-dash');
+    final id = await createProject();
+    final (engine, _, asrAdapter) = makeEngine([
+      (200, ''), // PUT 音频
+      (200, ''), // DELETE 对象
+    ], [
+      (200, '{"output":{"task_id":"t-1","task_status":"PENDING"}}'), // 提交
+      (200,
+          '{"output":{"task_id":"t-1","task_status":"SUCCEEDED","transcription_url":"https://res/1.json"}}'), // 轮询
+      (200, asrResultJson), // 下载结果
+    ]);
+
+    await engine.run(id);
+
+    final submit = asrAdapter.requests
+        .where((r) => r.path.contains('transcription') && r.method == 'POST')
+        .single;
+    expect(submit.headers['Authorization'], 'Bearer sk-dash',
+        reason: 'ASR 是百炼服务，必须用 DashScope 渠道的 KEY 鉴权');
+  });
+
   test('上传失败 → FAILED+failed_stage，修复后 retry 走完全程', () async {
     final id = await createProject();
     final (engine, ossAdapter, asrAdapter) = makeEngine([

@@ -43,6 +43,12 @@ void main() {
     return repo;
   }
 
+  /// SnackBar 自动收起依赖定时器：推进假时钟并等退场动画结束。
+  Future<void> dismissSnackBar(WidgetTester tester) async {
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('空态提示 + 添加渠道对话框落库后列表刷新', (tester) async {
     await tester.pumpWidget(wrap(section()));
     await tester.pumpAndSettle();
@@ -127,5 +133,113 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('尚未添加'), findsOneWidget);
     expect(find.text('待删站'), findsNothing);
+  });
+
+  testWidgets('新增渠道后可通过 UI 创建槽位绑定：选渠道→模型弹层选模型→落库', (tester) async {
+    final repo = await seededRepo();
+    final cid =
+        await repo.addChannel(name: '新站', baseUrl: 'https://n/v1', apiKey: 'sk-n');
+    await tester.pumpWidget(wrap(section()));
+    await tester.pumpAndSettle();
+
+    // 拉取模型列表（FakeLlmService 不触网）
+    await tester.tap(find.text('测试/拉模型'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('连接成功'), findsOneWidget);
+    await dismissSnackBar(tester);
+
+    // 深层分析槽位：打开渠道下拉并选择「新站」（此前无绑定时选择无法持久化）
+    await tester.tap(find.byKey(const Key('slot-channel-analysis')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新站').last);
+    await tester.pumpAndSettle();
+
+    // 模型弹层此时必须可用（无绑定时也不禁用）
+    await tester.tap(find.byKey(const Key('slot-model-analysis')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('fake-model-1').last);
+    await tester.pumpAndSettle();
+
+    final b = await repo.loadSlot(LlmSlot.analysis);
+    expect(b, isNotNull, reason: '选择模型后必须落库（此前 UI 流程走不通）');
+    expect(b!.channelId, cid);
+    expect(b.model, 'fake-model-1');
+    expect(find.text('fake-model-1'), findsOneWidget);
+  });
+
+  testWidgets('已绑定槽位切换渠道后选模型：保存新渠道 id 而非旧渠道', (tester) async {
+    final repo = await seededRepo();
+    final idA =
+        await repo.addChannel(name: '甲站', baseUrl: 'https://a/v1', apiKey: 'sk-a');
+    await repo.saveSlot(LlmSlot.analysis, channelId: idA, model: 'm-a');
+    await tester.pumpWidget(wrap(section()));
+    await tester.pumpAndSettle();
+
+    // 通过对话框新增「乙站」：保存后自动拉模型
+    await tester.tap(find.text('添加渠道'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('field-name')), '乙站');
+    await tester.enterText(find.byKey(const Key('field-baseurl')), 'https://b/v1');
+    await tester.enterText(find.byKey(const Key('field-apikey')), 'sk-b');
+    await tester.tap(find
+        .descendant(of: find.byType(AlertDialog), matching: find.text('保存')));
+    await tester.pumpAndSettle();
+    await dismissSnackBar(tester);
+
+    // analysis 槽位：渠道切到乙站 → 模型弹层选 fake-model-2
+    await tester.tap(find.byKey(const Key('slot-channel-analysis')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('乙站').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('slot-model-analysis')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('fake-model-2').last);
+    await tester.pumpAndSettle();
+
+    final channels = await repo.loadChannels();
+    final idB = channels.firstWhere((c) => c.name == '乙站').id;
+    final b = (await repo.loadSlot(LlmSlot.analysis))!;
+    expect(b.channelId, idB, reason: '必须保存下拉当前选中的渠道，而非旧绑定渠道');
+    expect(b.model, 'fake-model-2');
+  });
+
+  testWidgets('渠道对话框校验：空字段报错不关闭；BASE_URL 非 http(s) 拦截；填写完整后保存', (tester) async {
+    final repo = await seededRepo();
+    await tester.pumpWidget(wrap(section()));
+    await tester.pumpAndSettle();
+
+    Future<void> tapDialogSave() async {
+      await tester.tap(find
+          .descendant(of: find.byType(AlertDialog), matching: find.text('保存')));
+      await tester.pump();
+    }
+
+    await tester.tap(find.text('添加渠道'));
+    await tester.pumpAndSettle();
+
+    // 全空：报错且对话框不关闭
+    await tapDialogSave();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('请填写名称'), findsOneWidget);
+    expect(find.text('请填写 BASE_URL'), findsOneWidget);
+    expect(find.text('请填写 API KEY'), findsOneWidget);
+
+    // BASE_URL 非 http(s)：拦截
+    await tester.enterText(find.byKey(const Key('field-name')), '站点B');
+    await tester.enterText(find.byKey(const Key('field-baseurl')), 'ftp://x');
+    await tester.enterText(find.byKey(const Key('field-apikey')), 'sk-b');
+    await tapDialogSave();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('需以 http:// 或 https:// 开头'), findsOneWidget);
+
+    // 填写完整：保存落库
+    await tester.enterText(find.byKey(const Key('field-baseurl')), 'https://ok/v1');
+    await tapDialogSave();
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('站点B'), findsOneWidget);
+    expect(find.text('https://ok/v1'), findsOneWidget);
+    final channels = await repo.loadChannels();
+    expect(channels.map((c) => c.name), contains('站点B'));
   });
 }
