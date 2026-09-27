@@ -93,6 +93,72 @@ class Prompts {
       'L1/L2 的 content 为字符串，L3/L4 的 content 为对象；'
       '分析必须引用具体原文；L4 问题要具体到本块中的抉择，不要空泛鸡汤。';
 
+  /// Prompt N2v2（地图趟，设计文档 §7.1；summary 槽位）
+  static String novelMap({
+    required String roster,
+    required List<String> chapterBlocks,
+  }) =>
+      '你是小说地图整理助手。以下是截至上一批为止的已知人物名单（仅主要与近期活跃人物），'
+      '以及连续多章正文，请逐章整理。\n'
+      '[已知人物名单]\n$roster\n'
+      '[正文]\n${chapterBlocks.join('\n\n')}\n'
+      '任务：\n'
+      '①为每一章写 150~300 字摘要：概括本章情节、转折与人物关系变化。\n'
+      '②列出每章出场人物（cast，用名单或正文中的名字）。\n'
+      '③记录人物关键事件：只记对后文可能有意义的事（立誓、结怨、获物、别离、身份揭晓等），'
+      '主要人物每章至多 2 条，龙套不记。\n'
+      '④维护人物名单：新出现的重要人物给一句话人设（身份/性格/立场）；'
+      '名单中已有人物若人设变化则更新其 profile；贯穿全书的重要人物 major=true。\n'
+      '输出：{"chapters":[{"idx":0,"summary":"...","cast":["人物名"],'
+      '"events":[{"name":"人物名","event":"一句"}],'
+      '"characters":[{"name":"新人物或更新人物","profile":"一句话人设","major":false}]}]}\n'
+      '要求：idx 必须与正文标注的章号一致；只依据文本，禁止编造；无名龙套不收录。';
+
+  /// Prompt N3v2（故事地图趟，设计文档 §7.2；summary 槽位）
+  static String digestMerge({
+    required String oldDigest,
+    required List<String> chapterSummaries,
+  }) =>
+      '将旧摘要与新章节摘要合并为不超过400字的"故事至今"摘要。\n'
+      '必须保留：人物关系与立场、当前悬念、未回收伏笔（逐条短语列出）。\n'
+      '[旧摘要]$oldDigest\n'
+      '[新章摘要]\n${chapterSummaries.map((s) => '- $s').join('\n')}\n'
+      '输出：{"digest":"..."}';
+
+  /// Prompt N4v2（批注趟，设计文档 §7.3；analysis 槽位。人设=陪读老友）
+  static String novelAnnotateV2({
+    required String digest,
+    required String cast,
+    required String recall,
+    required String recentSummaries,
+    required String chaptersText,
+    required int chapterStart,
+    required int chapterEnd,
+  }) =>
+      '你是用户的陪读老友，陪用户读小说、提升情商与思维。只依据"故事至今"与本章前文发言。\n'
+      '[故事至今]$digest\n'
+      '[出场人物]\n$cast\n'
+      '${recall.isEmpty ? '' : '[相关前文回忆]\n$recall\n'}'
+      '[前文摘要]${recentSummaries.isEmpty ? '（本章即故事开头）' : recentSummaries}\n'
+      '[本章正文（第$chapterStart~$chapterEnd章，每行开头 [n] 是段落编号 para_idx，批注必须锚定到它）]\n$chaptersText\n'
+      '三条硬规则：\n'
+      '1. 只基于"故事至今"与本章前文，绝不透露后文走向与结局；\n'
+      '2. 可以点破"在酝酿什么"（如"他心里开始犯嘀咕，总觉得这事没完"），但不点名后果；\n'
+      '3. 引用前文必须用[出场人物]与[前文摘要]里的具体事实，不许空泛。\n'
+      '输出：\n'
+      '{"chapters":[\n'
+      ' {"idx":$chapterStart,"annotations":[\n'
+      '  {"para_idx":0,"type":"L1","content":"潜台词解读，2~4句解释性叙述"},\n'
+      '  {"para_idx":0,"type":"L2","content":"心理分析：动机/性格/情绪，2~4句"},\n'
+      '  {"para_idx":0,"type":"L3","content":{"term":"名词","text":"150字内知识","uncertain":false}},\n'
+      '  {"para_idx":0,"type":"L4","content":{"question":"抛给用户的开放性问题，逼其代入思考","perspectives":["参考角度1","参考角度2","参考角度3"]}}\n'
+      ' ]}\n'
+      ']}\n'
+      '要求：每章 3~8 条为基准、可上下浮动，只标有分析价值的段落，宁缺毋滥；'
+      '禁止"此处埋下伏笔"式标签短语；para_idx 必须取自正文出现过的编号；'
+      'idx 必须取自本次送审的章号；type 只能是 L1/L2/L3/L4；'
+      'L1/L2 的 content 为字符串，L3/L4 的 content 为对象。';
+
 }
 
 /// ms → [hh:mm:ss]（Prompt 对白行用）
