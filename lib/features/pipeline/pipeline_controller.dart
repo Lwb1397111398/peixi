@@ -23,6 +23,7 @@ import 'package:peixi/features/pipeline/commentary_generator.dart';
 import 'package:peixi/features/pipeline/novel_annotate_pass.dart';
 import 'package:peixi/features/pipeline/novel_importer.dart';
 import 'package:peixi/features/pipeline/novel_pipeline.dart';
+import 'package:peixi/features/pipeline/novel_recall.dart';
 import 'package:peixi/features/pipeline/novel_scheduler.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/pipeline_queue.dart';
@@ -140,7 +141,13 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     final repo = ref.read(settingsRepoProvider);
     e.attachRun((id) async {
       final params = await repo.loadNovelParams();
-      final recall = null; // Task 13 接入：vectorRecall && embedding 槽位已绑定时 → NovelRecallService(db: db, llm: llm)
+      // 语义回忆（可选层，设计文档 §10）：开关开启且 embedding 槽位已绑定才
+      // 构造，否则整层零构造零调用（关闭零影响）。构建失败/调用失败由
+      // NovelRecallService 内部静默降级，绝不阻塞批注主线。
+      final recall =
+          params.vectorRecall && llm.modelOf(LlmSlot.embedding) != null
+              ? NovelRecallService(db: db, llm: llm)
+              : null;
       final scheduler = NovelScheduler(
           db: db,
           llm: llm,
