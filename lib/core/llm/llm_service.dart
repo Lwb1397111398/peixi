@@ -347,10 +347,20 @@ class LlmService {
             promptTokens: Value((usage['prompt_tokens'] as int?) ?? 0),
             completionTokens: Value((usage['completion_tokens'] as int?) ?? 0),
           ));
-      return [
-        for (final d in data)
-          [for (final v in (d['embedding'] as List)) (v as num).toDouble()]
-      ];
+      // OpenAI 规范 data[i].index 标识输入序号：Azure/部分中转站批量返回会
+      // 乱序。按 index 对齐后输出（缺失时保持现序），防调用方
+      // inputs[i] ↔ vectors[i] 随数组序静默错配（召回质量劣化且无报错）。
+      final indexed = <(int, List<double>)>[
+        for (var i = 0; i < data.length; i++)
+          (
+            ((data[i] as Map)['index'] as num?)?.toInt() ?? i,
+            [
+              for (final v in ((data[i] as Map)['embedding'] as List))
+                (v as num).toDouble(),
+            ],
+          ),
+      ]..sort((a, b) => a.$1.compareTo(b.$1));
+      return [for (final (_, vec) in indexed) vec];
     } finally {
       gate.release();
     }

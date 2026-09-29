@@ -234,6 +234,28 @@ void main() {
             .having((e) => e.message, 'message', contains('net down'))));
   });
 
+  test('embed：响应按 index 字段对齐输入（乱序返回防错配）', () async {
+    // 响应数组顺序与 index 顺序相反（Azure/中转站批量乱序）：
+    // 输出向量必须按 index 归位，而非按数组序
+    final (dio, adapter) = dioWith([
+      TestResp(
+          200,
+          '{"data":[{"index":1,"embedding":[0.3,0.4]},'
+              '{"index":0,"embedding":[0.1,0.2]}],"usage":{}}'),
+    ]);
+    final svc = LlmService(dio: dio, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true)
+        ],
+        slots: {LlmSlot.embedding: SlotBinding(channelId: 1, model: 'text-embedding-3')},
+      ));
+    final vs = await svc.embed(['一', '二']);
+    expect(vs[0], [0.1, 0.2], reason: 'index=0 的向量对齐第一个输入');
+    expect(vs[1], [0.3, 0.4]);
+    expect(adapter.requests.single.path, 'https://a/v1/embeddings');
+  });
+
   test('缓存隔离：不同渠道 baseUrl 同模型同消息不串缓存（2 次 HTTP）', () async {
     final (dio, adapter) = dioWith([
       TestResp(200, chatBody('{"src":"a"}')),

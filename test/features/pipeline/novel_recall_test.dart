@@ -38,6 +38,7 @@ class DualModeAdapter implements HttpClientAdapter {
     this.annotateBodies = const [],
     this.embeddingPages = const [],
     this.failEmbeddings = false,
+    this.failEmbedAt = const <int>{},
   });
 
   final List<String> mapBodies;
@@ -49,10 +50,15 @@ class DualModeAdapter implements HttpClientAdapter {
   final List<List<List<double>>> embeddingPages;
   final bool failEmbeddings; // /embeddings 一律 500（LlmException 静默降级用）
 
+  /// 按序号失败：本次测试内第 N 次（0 起）/embeddings 请求返回 500
+  /// （分批中途失败用：批 1 成功、批 2 失败）。
+  final Set<int> failEmbedAt;
+
   final requests = <RequestOptions>[];
   final order = <String>[]; // 'map' | 'digest' | 'annotate' | 'embed'
   final embedInputCounts = <int>[];
   final _taken = <String, int>{'map': 0, 'digest': 0, 'annotate': 0, 'embed': 0};
+  int _embedCalls = 0;
 
   List<List<double>> _embedPage(int n) {
     if (embeddingPages.isEmpty) {
@@ -80,7 +86,7 @@ class DualModeAdapter implements HttpClientAdapter {
       final n = ((options.data as Map)['input'] as List).length;
       embedInputCounts.add(n);
       order.add('embed');
-      if (failEmbeddings) {
+      if (failEmbeddings || failEmbedAt.contains(_embedCalls++)) {
         return ResponseBody.fromString(
             '{"error":{"message":"embed down"}}', 500,
             headers: _jsonHeaders);
@@ -134,6 +140,18 @@ class _FakeRecall implements NovelRecallProvider {
       {required int beforeChapterIdx, required String query}) async {
     calls.add((beforeChapterIdx, query));
     return text;
+  }
+}
+
+/// 计数向量解码的召回服务（验证内存缓存命中：命中免 jsonDecode）。
+class _CountingDecodeRecall extends NovelRecallService {
+  _CountingDecodeRecall({required super.db, required super.llm});
+  int decodeCalls = 0;
+
+  @override
+  List<double> decodeVector(String vectorJson) {
+    decodeCalls++;
+    return super.decodeVector(vectorJson);
   }
 }
 
@@ -271,6 +289,24 @@ void main() {
       expect(down.order, ['embed']);
       expect(await db.select(db.chapterEmbeddings).get(), isEmpty);
     });
+
+    test('pending > 64 分批 embed：各批 ≤64；中途失败已落库批保留，下次续建只补剩余',
+        () async {
+      final id = await seedBook(100);
+      await markSummarized(id, through: 99);
+      // 第 2 次 /embeddings 请求（0 起）500：批 1（64 章）已落库、批 2 失败
+      final down = DualModeAdapter(failEmbedAt: {1});
+      await NovelRecallService(db: db, llm: llm(down)).ensureIndexed(id);
+      expect(down.embedInputCounts, [64, 36], reason: '按 64 条分批：64 + 36');
+      expect(await db.select(db.chapterEmbeddings).get(), hasLength(64),
+          reason: '每批包事务落库：批 2 失败不回滚批 1 的部分进展');
+
+      // 幂等续建：只剩 36 章，单批补齐
+      final resume = DualModeAdapter();
+      await NovelRecallService(db: db, llm: llm(resume)).ensureIndexed(id);
+      expect(resume.embedInputCounts, [36], reason: '只 embed 缺向量的剩余章');
+      expect(await db.select(db.chapterEmbeddings).get(), hasLength(100));
+    });
   });
 
   group('NovelRecallService.recallContext（cos top3 前文回忆）', () {
@@ -322,6 +358,76 @@ void main() {
           '- 第0章摘要：第0章摘要\n- 第1章摘要：第1章摘要');
     });
 
+    test('默认 topK=3：4 个过阈值命中只取分数前 3', () async {
+      final id = await seedBook(5);
+      await markSummarized(id, through: 4);
+      final adapter = DualModeAdapter(embeddingPages: [
+        <List<double>>[
+          [1, 0],
+          [0.96, 0.28], // cos=0.96
+          [0.8, 0.6], // cos=0.8
+          [0.6, 0.8], // cos=0.6 ≥ 0.35
+          [-1, 0], // cos=-1
+        ],
+        <List<double>>[[1, 0]],
+      ]);
+      final svc =
+          NovelRecallService(db: db, llm: llm(adapter)); // 默认 topK=3/minScore
+      await svc.ensureIndexed(id);
+
+      // 5 章里 4 章过阈值，默认只取分数前 3
+      expect(await svc.recallContext(id, beforeChapterIdx: 5, query: '查询'),
+          '- 第0章摘要：第0章摘要\n'
+          '- 第1章摘要：第1章摘要\n'
+          '- 第2章摘要：第2章摘要');
+    });
+
+    test('空查询零 embed（老项目回填批首章 digest=null 场景）', () async {
+      final id = await seedBook(2);
+      await markSummarized(id, through: 1);
+      final adapter = DualModeAdapter(embeddingPages: [
+        <List<double>>[[1, 0]],
+      ]);
+      final svc = NovelRecallService(db: db, llm: llm(adapter));
+      await svc.ensureIndexed(id);
+      expect(await svc.recallContext(id, beforeChapterIdx: 1, query: ''), '');
+      expect(await svc.recallContext(id, beforeChapterIdx: 1, query: '   '), '');
+      expect(adapter.order, ['embed'], reason: '仅剩 ensureIndexed 那次 embed：空查询不烧查询向量');
+    });
+
+    test('有索引但 beforeChapterIdx=0 无前文候选 → 空串零查询 embed（先 SQL 判存在）',
+        () async {
+      final id = await seedBook(2);
+      await markSummarized(id, through: 1);
+      final adapter = DualModeAdapter(embeddingPages: [
+        <List<double>>[[1, 0]],
+      ]);
+      final svc = NovelRecallService(db: db, llm: llm(adapter));
+      await svc.ensureIndexed(id);
+      expect(await svc.recallContext(id, beforeChapterIdx: 0, query: '查询'), '');
+      expect(adapter.order, ['embed'], reason: '候选集为空在 embed 之前判出');
+    });
+
+    test('非 LLM 异常隔离：坏向量行（非法 JSON）解码失败 → 静默空串不击穿调用方',
+        () async {
+      final id = await seedBook(2);
+      await markSummarized(id, through: 1);
+      await db.into(db.chapterEmbeddings).insert(
+          ChapterEmbeddingsCompanion.insert(
+              projectId: id,
+              chapterId: (await chaptersOf(id)).first.id,
+              dim: 2,
+              vectorJson: '{bad json'));
+      final adapter = DualModeAdapter(embeddingPages: [
+        <List<double>>[[1, 0]],
+      ]);
+      // 旧实现 on LlmException：FormatException 会直接抛穿调用方
+      expect(
+          await NovelRecallService(db: db, llm: llm(adapter))
+              .recallContext(id, beforeChapterIdx: 1, query: '查询'),
+          '');
+    });
+
     test('无索引直接空串（零 embed 调用）；embed 失败静默返回空串', () async {
       final id = await seedBook(2);
       await markSummarized(id, through: 1);
@@ -337,6 +443,51 @@ void main() {
           await NovelRecallService(db: db, llm: llm(down))
               .recallContext(id, beforeChapterIdx: 2, query: 'q'),
           '');
+    });
+  });
+
+  group('向量内存缓存（chapterId → List<double>）', () {
+    test('ensureIndexed 落库同步填缓存：同实例 recallContext 零解码', () async {
+      final id = await seedBook(3);
+      await markSummarized(id, through: 2);
+      final adapter = DualModeAdapter(embeddingPages: [
+        <List<double>>[
+          [1, 0],
+          [0.6, 0.8],
+          [0, 1],
+        ],
+        <List<double>>[[1, 0]],
+      ]);
+      final svc = _CountingDecodeRecall(db: db, llm: llm(adapter));
+      await svc.ensureIndexed(id);
+      expect(await svc.recallContext(id, beforeChapterIdx: 3, query: '查询'),
+          isNotEmpty);
+      await svc.recallContext(id, beforeChapterIdx: 3, query: '查询');
+      expect(svc.decodeCalls, 0, reason: '落库时已同步填缓存，召回免解码');
+    });
+
+    test('跨实例候选行：连续两次 recallContext 只解码一次', () async {
+      final id = await seedBook(3);
+      await markSummarized(id, through: 2);
+      // 预置向量行（模拟上一 run 的索引），本实例缓存为空
+      final chs = await chaptersOf(id);
+      for (var i = 0; i < chs.length; i++) {
+        await db.into(db.chapterEmbeddings).insert(
+            ChapterEmbeddingsCompanion.insert(
+                projectId: id,
+                chapterId: chs[i].id,
+                dim: 2,
+                vectorJson: jsonEncode([1.0, 0.5 * i])));
+      }
+      final adapter = DualModeAdapter(embeddingPages: [
+        <List<double>>[[1, 0]],
+      ]);
+      final svc = _CountingDecodeRecall(db: db, llm: llm(adapter));
+      final r1 = await svc.recallContext(id, beforeChapterIdx: 3, query: '查询');
+      expect(r1, isNotEmpty);
+      final r2 = await svc.recallContext(id, beforeChapterIdx: 3, query: '查询');
+      expect(r2, r1);
+      expect(svc.decodeCalls, 3, reason: '仅首轮解码 3 个候选行，第二轮全命中缓存');
     });
   });
 
@@ -422,18 +573,18 @@ void main() {
       await scheduler.run(id);
 
       // 冲刺段确定序：2 map → embed(章 0-3 索引) → 2 digest → 首个 annotate
-      // 批先 recallContext（embed 查询向量）再发批注调用
-      expect(adapter.order.take(7),
-          ['map', 'map', 'embed', 'digest', 'digest', 'embed', 'annotate']);
+      // 批（章 0-1，beforeChapterIdx=0 无前文候选）零查询 embed 直接发批注
+      expect(adapter.order.take(6),
+          ['map', 'map', 'embed', 'digest', 'digest', 'annotate']);
       // ensureIndexed 恰 4 次（冲刺后 1 + 地图泳道每步后 3，批量 4/2/2/2）；
-      // 每个批注批恰好 1 次查询向量 embed。批注批会在快照前沿截断（如
-      // 6~6、9~9），批数随双泳道时序浮动 → 用不变式断言：
-      // embed 总数 = 4 次索引 + 批注批数
+      // 查询向量 embed = 批注批数 - 1（仅首个批注批无前文候选不烧调用）。
+      // 批注批会在快照前沿截断（如 6~6、9~9），批数随双泳道时序浮动 → 用
+      // 不变式断言：embed 总数 = 4 次索引 + (批注批数 - 1)
       final annotateCalls =
           adapter.order.where((k) => k == 'annotate').length;
       expect(annotateCalls, greaterThanOrEqualTo(5));
       expect(adapter.order.where((k) => k == 'embed'),
-          hasLength(4 + annotateCalls));
+          hasLength(4 + annotateCalls - 1));
       expect(adapter.embedInputCounts.where((c) => c > 1).toList(),
           [4, 2, 2, 2]);
       // 全书完成后所有章都有向量
@@ -491,16 +642,17 @@ void main() {
       await untilReady(id);
       await controller.waitPipelineIdle();
 
-      // 默认参数 burst=10=全书：map×2 → embed(10 章索引) → digest →
-      // 每个 annotate 批先 recallContext（查询向量 embed 1 条）再发批注调用
+      // 默认参数 burst=10=全书：map×2 → embed(10 章索引) → digest → 4 个
+      // annotate 批。首批（章 0-2）beforeChapterIdx=0 无前文候选 → 零查询
+      // embed 直接发批注；后续每批先 recallContext（查询向量 1 条）再发调用
       expect(adapter.order, [
         'map', 'map', 'embed', 'digest', //
-        'embed', 'annotate', //
+        'annotate', //
         'embed', 'annotate', //
         'embed', 'annotate', //
         'embed', 'annotate',
       ]);
-      expect(adapter.embedInputCounts, [10, 1, 1, 1, 1]);
+      expect(adapter.embedInputCounts, [10, 1, 1, 1]);
       expect(await db.select(db.chapterEmbeddings).get(), hasLength(10));
       final p = await projectOf(id);
       expect(p.status, 'READY');
@@ -530,6 +682,91 @@ void main() {
       expect(await db.select(db.chapterEmbeddings).get(), isEmpty);
       final p = await projectOf(id);
       expect(p.status, 'READY');
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('vectorRecall 开 + embedding 槽位未绑定 → 零构造零 embed（开关不误开）',
+        () async {
+      final adapter = DualModeAdapter(
+          mapBodies: [mapRespAll()],
+          digestBodies: [digestResp()],
+          annotateBodies: [annRespAll()]);
+      container = ProviderContainer(overrides: [
+        databaseProvider.overrideWithValue(db),
+        settingsRepoProvider.overrideWithValue(
+            SettingsRepository(db, const FlutterSecureStorage())),
+        llmServiceProvider.overrideWithValue(llm(adapter, withEmbedding: false)),
+      ]);
+      container.read(pipelineControllerProvider.notifier);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final id = await seedBook(10);
+      await SettingsRepository(db, const FlutterSecureStorage())
+          .saveNovelParams(const NovelParams(vectorRecall: true));
+      final controller = container.read(pipelineControllerProvider.notifier);
+      await controller.retry(id);
+      await untilReady(id);
+      await controller.waitPipelineIdle();
+
+      expect(adapter.order.where((k) => k == 'embed'), isEmpty,
+          reason: '槽位未绑定：开关开了也不构造回忆层');
+      expect(await db.select(db.chapterEmbeddings).get(), isEmpty);
+      final p = await projectOf(id);
+      expect(p.status, 'READY');
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('vectorRecall 开 → 单章重批接回忆：prompt 含 [相关前文回忆]（与主链路同口径）',
+        () async {
+      final adapter = DualModeAdapter(annotateBodies: [
+        '{"chapters":[{"idx":1,"annotations":'
+            '[{"para_idx":2,"type":"L1","content":"重批批注"}]}]}',
+      ]);
+      container = ProviderContainer(overrides: [
+        databaseProvider.overrideWithValue(db),
+        settingsRepoProvider.overrideWithValue(
+            SettingsRepository(db, const FlutterSecureStorage())),
+        llmServiceProvider.overrideWithValue(llm(adapter)),
+      ]);
+      container.read(pipelineControllerProvider.notifier);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final id = await seedBook(2);
+      // 手工置全书就绪（重批不跑管线）：mapDone+摘要+快照+已批注
+      for (final ch in await chaptersOf(id)) {
+        await (db.update(db.chapters)..where((t) => t.id.equals(ch.id)))
+            .write(ChaptersCompanion(
+                mapDone: const Value(true),
+                annotDone: const Value(true),
+                summary: Value('第${ch.idx}章摘要'),
+                digestBefore: Value('快照${ch.idx}')));
+      }
+      // 预置章 0 向量（模拟上次 run 的索引）；重批第 1 章 → 前文候选只有章 0
+      final chs = await chaptersOf(id);
+      await db.into(db.chapterEmbeddings).insert(
+          ChapterEmbeddingsCompanion.insert(
+              projectId: id,
+              chapterId: chs[0].id,
+              dim: 2,
+              vectorJson: jsonEncode([1.0, 0.0])));
+      await SettingsRepository(db, const FlutterSecureStorage())
+          .saveNovelParams(const NovelParams(vectorRecall: true));
+
+      final controller = container.read(pipelineControllerProvider.notifier);
+      await controller.reannotateChapter(id, 1);
+      await controller.waitPipelineIdle();
+
+      // 重批先 recallContext（查询向量，默认页 [1,0] 与章 0 同向 cos=1）再发批注
+      expect(adapter.order, ['embed', 'annotate']);
+      expect(adapter.embedInputCounts, [1]);
+      final chatReqs = adapter.requests
+          .where((r) => !r.path.endsWith('/embeddings'))
+          .toList();
+      final prompt =
+          (chatReqs.single.data as Map)['messages'].last['content'] as String;
+      expect(prompt, contains('[相关前文回忆]\n- 第0章摘要：第0章摘要'));
+      final annotated = await (db.select(db.chapters)
+            ..where((t) => t.id.equals(chs[1].id)))
+          .getSingle();
+      expect(annotated.annotDone, isTrue);
     }, timeout: const Timeout(Duration(seconds: 60)));
   });
 }

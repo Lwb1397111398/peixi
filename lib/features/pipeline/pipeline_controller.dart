@@ -191,7 +191,15 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     }
     final db = ref.read(databaseProvider);
     try {
-      final pass = NovelAnnotatePass(db: db, llm: ref.read(llmServiceProvider));
+      // 单章重批与主链路同口径构造回忆层（可选层）：开关开且 embedding 槽位
+      // 已绑定才接，否则 null——重批 prompt 与批注趟行为一致（含/缺
+      // [相关前文回忆] 节）。实例此处新建，随重批结束废弃，无跨次状态。
+      final llm = ref.read(llmServiceProvider);
+      final params = await ref.read(settingsRepoProvider).loadNovelParams();
+      final recall = params.vectorRecall && llm.modelOf(LlmSlot.embedding) != null
+          ? NovelRecallService(db: db, llm: llm)
+          : null;
+      final pass = NovelAnnotatePass(db: db, llm: llm, recall: recall);
       await pass.reannotateChapter(projectId, chapterIdx);
       // 完成前先同步徽章计数：重批路径不逐章发进度事件，meta.annotatedChapters
       // 停在重批前的值，库页/处理页数字会短暂分叉。
