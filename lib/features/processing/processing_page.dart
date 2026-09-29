@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart' show ArithmeticAggregates;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/settings/api_config.dart';
@@ -411,11 +412,16 @@ class _NovelSwimlanes extends ConsumerStatefulWidget {
 class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
   final _chapterCtrl = TextEditingController();
   bool _loading = true;
+  bool _reannotating = false;
   int _total = 0;
   int _mapDone = 0;
   int _annotDone = 0;
   int _tokens = 0;
   int _readingIdx = 0;
+
+  /// 重载序号：每次 _reload 自增，await 返回后不一致说明已有更新的一次
+  /// 重载在途（事件流/重批完成都会触发），旧快照直接丢弃不回写。
+  int _reloadSeq = 0;
 
   @override
   void initState() {
@@ -431,21 +437,27 @@ class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
 
   /// 页面加载与每次 controller state 变化时重查（事件只当刷新信号，
   /// 显示数值一律以 DB 复算为准，不信任事件里的文案/计数）。
+  /// 并发守卫：每个 await 后校验 seq 与 mounted，被更新的重载取代或页面
+  /// 已销毁时立即返回，避免 initState 的 fire-and-forget 在 dispose 后空跑、
+  /// 也避免慢查询的旧快照覆盖新数据。
   Future<void> _reload() async {
+    final seq = ++_reloadSeq;
     final db = ref.read(databaseProvider);
     final pid = widget.project.id;
     final chapters = await (db.select(db.chapters)
           ..where((t) => t.projectId.equals(pid)))
         .get();
+    if (seq != _reloadSeq || !mounted) return;
     final p = await (db.select(db.projects)..where((t) => t.id.equals(pid)))
         .getSingleOrNull();
+    if (seq != _reloadSeq || !mounted) return;
     final promptSum = db.llmLogs.promptTokens.sum();
     final completionSum = db.llmLogs.completionTokens.sum();
     final tokenRow = await (db.selectOnly(db.llmLogs)
           ..addColumns([promptSum, completionSum])
           ..where(db.llmLogs.projectId.equals(pid)))
         .getSingle();
-    if (!mounted) return;
+    if (seq != _reloadSeq || !mounted) return;
     setState(() {
       _total = chapters.length;
       _mapDone = chapters.where((c) => c.mapDone).length;
@@ -460,7 +472,11 @@ class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
   }
 
   Future<void> _reannotate(int chapterIdx) async {
+    // 重批期间 controller 不发进度事件、busy 恒 false：不在这里置位禁用，
+    // 双击会穿透到 controller 并发重批同一章（双倍 token）。
+    if (_reannotating) return;
     final messenger = ScaffoldMessenger.of(context);
+    setState(() => _reannotating = true);
     try {
       await ref
           .read(pipelineControllerProvider.notifier)
@@ -468,6 +484,8 @@ class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
       await _reload();
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('重批失败：$e')));
+    } finally {
+      if (mounted) setState(() => _reannotating = false);
     }
   }
 
@@ -482,6 +500,9 @@ class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final lead = _annotDone - _readingIdx;
+    // 章号输入即时校验：reannotateChapter 的 n 是章号（chapters.idx，0 起，
+    // 导入器按 0..total-1 连续编号），越界章 controller 侧会抛"章不存在"，
+    // 这里直接禁用按钮给出前置反馈。digitsOnly 挡非数字，负号进不来。
     final chapterNum = int.tryParse(_chapterCtrl.text.trim());
 
     return Card(
@@ -522,6 +543,7 @@ class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
                 child: TextField(
                   controller: _chapterCtrl,
                   keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: const InputDecoration(
                     labelText: '章号（0 起）',
                     isDense: true,
@@ -531,9 +553,15 @@ class _NovelSwimlanesState extends ConsumerState<_NovelSwimlanes> {
               ),
               const SizedBox(width: Space.s),
               FilledButton(
-                // 调度器运行中拒绝重批（controller 侧同样有防线）
+                // 调度器运行中/重批进行中/章号非法（空、非数字、越界
+                // >=_total）都禁用（controller 侧同样有防线）
                 onPressed:
-                    busy || chapterNum == null ? null : () => _reannotate(chapterNum),
+                    busy ||
+                        _reannotating ||
+                        chapterNum == null ||
+                        chapterNum >= _total
+                    ? null
+                    : () => _reannotate(chapterNum),
                 child: const Text('重新批注此章'),
               ),
             ]),

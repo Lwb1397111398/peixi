@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -166,26 +167,73 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
   Stream<PipelineEvent> get novelEvents =>
       _novelEngine?.events ?? const Stream.empty();
 
-  /// 单章重批（处理页按钮；调度器运行中拒绝）。
+  /// 单章重批（处理页按钮；调度器运行中拒绝，重批进行中重复调用同样拒绝）。
+  ///
+  /// 双重防线：`_reannotatingProjects` 在首个 await 前同步占位（`Set.add`
+  /// 返回 false 即已在重批，杜绝两次调用都通过 contains 检查的微任务竞态）；
+  /// 引擎 `isBusy` 只覆盖调度器 run，重批不经 run，故互斥必须在这里补齐，
+  /// 否则双击穿透会并发重批同一章、双倍烧 token。
   Future<void> reannotateChapter(int projectId, int chapterIdx) async {
+    if (!_reannotatingProjects.add(projectId)) {
+      throw Exception('该章正在重批中，请勿重复操作');
+    }
     final e = await novelEngine();
     if (e.isBusy(projectId)) {
+      _reannotatingProjects.remove(projectId);
       throw Exception('管线运行中，请先停止再重批单章');
     }
     final db = ref.read(databaseProvider);
-    final pass = NovelAnnotatePass(db: db, llm: ref.read(llmServiceProvider));
-    await pass.reannotateChapter(projectId, chapterIdx);
-    // 完成事件带项目当前真实状态：固定发 imported 会被 _onEvent 判 busy=true
-    // 且再无事件解锁 → 库卡片永久"处理中"。
-    final p = await (db.select(db.projects)
-          ..where((t) => t.id.equals(projectId)))
-        .getSingleOrNull();
-    if (p == null) return; // 重批途中项目被删：无状态可发
-    _onEvent(PipelineEvent(
-        projectId: projectId,
-        stage: 'novel',
-        status: ProjectStatus.fromDb(p.status),
-        detail: '已重批第 $chapterIdx 章'));
+    try {
+      final pass = NovelAnnotatePass(db: db, llm: ref.read(llmServiceProvider));
+      await pass.reannotateChapter(projectId, chapterIdx);
+      // 完成前先同步徽章计数：重批路径不逐章发进度事件，meta.annotatedChapters
+      // 停在重批前的值，库页/处理页数字会短暂分叉。
+      await _syncAnnotBadge(db, projectId);
+      // 完成事件带项目当前真实状态：固定发 imported 会被 _onEvent 判 busy=true
+      // 且再无事件解锁 → 库卡片永久"处理中"。
+      final p = await (db.select(db.projects)
+            ..where((t) => t.id.equals(projectId)))
+          .getSingleOrNull();
+      if (p == null) return; // 重批途中项目被删：无状态可发
+      _onEvent(PipelineEvent(
+          projectId: projectId,
+          stage: 'novel',
+          status: ProjectStatus.fromDb(p.status),
+          detail: '已重批第 $chapterIdx 章'));
+    } finally {
+      _reannotatingProjects.remove(projectId);
+    }
+  }
+
+  /// 重批完成后重算 annotatedChapters（count annot_done）写回 meta。
+  /// 参照 NovelScheduler._updateBadge：读改写包事务防 meta.digest 丢失更新。
+  /// 在 JSON map 层只改 annotatedChapters 一个键（不用 NovelMeta.encode 整体
+  /// 重写）——阅读进度等无关键也存同一 metaJson，整体重编码会静默丢弃。
+  Future<void> _syncAnnotBadge(AppDatabase db, int projectId) async {
+    try {
+      await db.transaction(() async {
+        final chapters = await (db.select(db.chapters)
+              ..where((t) => t.projectId.equals(projectId)))
+            .get();
+        final done = chapters.where((c) => c.annotDone).length;
+        final p = await (db.select(db.projects)
+              ..where((t) => t.id.equals(projectId)))
+            .getSingleOrNull();
+        if (p == null) return;
+        Map<String, dynamic> meta = {};
+        try {
+          meta = Map<String, dynamic>.from(jsonDecode(p.metaJson ?? '{}') as Map);
+        } catch (_) {
+          // metaJson 损坏：从空 map 起步，仅修徽章键，不再抛出
+        }
+        if ((meta['annotatedChapters'] as num?)?.toInt() == done) return;
+        meta['annotatedChapters'] = done;
+        await (db.update(db.projects)..where((t) => t.id.equals(projectId)))
+            .write(ProjectsCompanion(metaJson: Value(jsonEncode(meta))));
+      });
+    } catch (_) {
+      // 徽章同步失败不影响重批主线（与调度器 _updateBadge 同口径）
+    }
   }
 
   /// 入队串行推进管线；小说绕过队列直接挂调度器（§6.2：两遍式批注随到随
@@ -199,6 +247,9 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
   }
 
   final Set<Future<void>> _novelRuns = {};
+
+  /// 单章重批在途的项目集合（重批不经调度器 run，引擎 isBusy 看不见它）。
+  final Set<int> _reannotatingProjects = {};
 
   Future<void> _startNovel(int projectId) async {
     final e = await novelEngine();

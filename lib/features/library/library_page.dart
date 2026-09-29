@@ -717,12 +717,13 @@ String stageLabelOf(String? failedStage, {bool isNovel = false}) =>
         'audio' => '音频抽取',
         'upload' => '上传中转',
         'asr' => '语音识别',
-        // 两遍式管线新口径：map/digest/annotate（§8 错误表）
+        // 两遍式管线新口径：map/digest/annotate（§8 错误表）。
+        // annotate 阶段与处理页统一叫「批注」（不叫"批注生成"）
         'map' => isNovel ? '地图' : '角色映射',
         'digest' => '摘要快照',
-        'annotate' => '批注生成',
+        'annotate' => '批注',
         'segment' => '场景切分',
-        'commentary' => isNovel ? '批注生成' : '解说生成',
+        'commentary' => isNovel ? '批注' : '解说生成',
         'finalize' => '收尾',
         _ => failedStage,
       };

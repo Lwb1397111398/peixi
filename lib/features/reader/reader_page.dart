@@ -47,8 +47,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   final _l4Controllers = <int, TextEditingController>{};
   final _l4Answered = <int, String?>{}; // null=未作答，''=跳过
 
-  // 批注随到随显（设计文档 §9）：管线事件防抖重载当前章批注
+  // 批注随到随显（设计文档 §9）：管线事件防抖重载当前章批注。
+  // 防抖 800ms + maxWait 2s 兜底：事件间隔持续小于防抖窗口时刷新会被
+  // 无限推迟（饥饿），从首个未处理事件起 2s 的硬期限定时器强制刷一次
+  //（不随后续事件重置；每次刷新后重新起算）。
+  static const _reloadDebounceDelay = Duration(milliseconds: 800);
+  static const _reloadMaxWait = Duration(seconds: 2);
   Timer? _reloadDebounce;
+  Timer? _reloadDeadline;
 
   // 书页三主题（既有持久化语义，色值与旧版一致）
   static const _bgColors = {
@@ -117,18 +123,40 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
 
   /// 批注随到随显：防抖后重查章级断点与当前章批注并 setState
   /// （复用现有批注加载，不重复查正文；章行一并刷新供"生成中"提示判定）。
+  ///
+  /// 切章竞态守卫：查询前记录当前章标识（首段 paraId），await 返回后用户
+  /// 已切到别的章（_openChapter 换掉了 _paragraphs）则整体丢弃写回——否则
+  /// 旧章的批注/章行快照会在新章渲染后覆盖进来，把新章刚落库的批注冲掉。
   Future<void> _reloadAnnotations() async {
     if (_chapters.isEmpty || _paragraphs.isEmpty) return;
+    final chapterToken = _paragraphs.first.id;
     final rows = await _repo.chapters(widget.projectId);
     if (rows.isEmpty) return;
     final anns =
         await _repo.annotationsByParaId([for (final p in _paragraphs) p.id]);
     if (!mounted) return;
+    if (_paragraphs.isEmpty || _paragraphs.first.id != chapterToken) return;
     setState(() {
       _chapters = rows;
       _chapterIdx = _chapterIdx.clamp(0, rows.length - 1);
       _anns = anns;
     });
+  }
+
+  /// 防抖 800ms，maxWait 2s：每个事件把刷新推迟 800ms；首个未处理事件
+  /// 同时起一个 2s 硬期限定时器（不随事件重置），保证高频事件流下批注
+  /// 最迟 2s 可见。任一定时器到点即刷新并清掉另一个。
+  void _scheduleAnnotationReload() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(_reloadDebounceDelay, _flushAnnotationReload);
+    _reloadDeadline ??= Timer(_reloadMaxWait, _flushAnnotationReload);
+  }
+
+  void _flushAnnotationReload() {
+    _reloadDebounce?.cancel();
+    _reloadDeadline?.cancel();
+    _reloadDeadline = null;
+    if (mounted) _reloadAnnotations();
   }
 
   Future<void> _updatePrefs(ReaderPrefs p) async {
@@ -139,6 +167,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   @override
   void dispose() {
     _reloadDebounce?.cancel();
+    _reloadDeadline?.cancel();
     _scroll.dispose();
     for (final c in _l4Controllers.values) {
       c.dispose();
@@ -149,17 +178,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   @override
   Widget build(BuildContext context) {
     // 批注随到随显：该项目管线状态变化（批注进度/重批/里程碑事件）→
-    // 防抖 800ms 重载当前章批注。只读 busy 做提示判定，不展示事件文案
-    // （novelEvents 的 progress/degraded/burst 事件 status 恒为 imported，
-    // milestone 才携带真实状态，故这里绝不读 status 做显示）。
+    // 防抖 800ms（maxWait 2s 兜底）重载当前章批注。只读 busy 做提示判定，
+    // 不展示事件文案（novelEvents 的 progress/degraded/burst 事件 status 恒为
+    // imported，milestone 才携带真实状态，故这里绝不读 status 做显示）。
     ref.listen(pipelineControllerProvider, (prev, next) {
       final s = next[widget.projectId];
       if (s == null) return;
       if (prev?[widget.projectId] == s) return;
-      _reloadDebounce?.cancel();
-      _reloadDebounce = Timer(const Duration(milliseconds: 800), () {
-        if (mounted) _reloadAnnotations();
-      });
+      _scheduleAnnotationReload();
     });
     final pipelineBusy =
         ref.watch(pipelineControllerProvider)[widget.projectId]?.busy ?? false;
