@@ -34,7 +34,13 @@ class NovelMeta {
   /// v5：已完成批注的章数（调度器进度徽章 denormalized 到 meta）
   int annotatedChapters;
 
+  /// 本类只是 projects.meta_json 的类型化视图之一（ProjectMeta 是另一个），
+  /// fromJson 时收下不认识的键，encode 时原样带回——否则徽章更新会抹掉
+  /// 阅读进度等对方视图的键。
+  Map<String, dynamic> _extra = const {};
+
   Map<String, dynamic> toJson() => {
+        ..._extra,
         if (sourceFilename != null) 'sourceFilename': sourceFilename,
         'paraCount': paraCount,
         'charCount': charCount,
@@ -54,7 +60,7 @@ class NovelMeta {
     } catch (_) {
       return NovelMeta();
     }
-    return NovelMeta(
+    final meta = NovelMeta(
       sourceFilename: j['sourceFilename'] as String?,
       paraCount: (j['paraCount'] as num?)?.toInt() ?? 0,
       charCount: (j['charCount'] as num?)?.toInt() ?? 0,
@@ -63,6 +69,9 @@ class NovelMeta {
       chapterCount: (j['chapterCount'] as num?)?.toInt() ?? 0,
       annotatedChapters: (j['annotatedChapters'] as num?)?.toInt() ?? 0,
     );
+    // 只在解析路径收杂键；对象字段值在 toJson 里后写覆盖，永不回退
+    meta._extra = j;
+    return meta;
   }
 }
 

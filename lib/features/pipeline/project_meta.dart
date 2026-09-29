@@ -44,10 +44,16 @@ class ProjectMeta {
   /// 阅读进度（小说项目，设计稿 8.4 进度记忆）
   ReadingProgress? readingProgress;
 
+  /// 本类只是 projects.meta_json 的类型化视图之一（NovelMeta 是另一个），
+  /// fromJson 时收下不认识的键，encode 时原样带回——否则保存阅读进度会
+  /// 抹掉章计数/滚动摘要等管线视图的键。
+  Map<String, dynamic> _extra = const {};
+
   String audioPath(String audioDir, int projectId) =>
       '$audioDir/$projectId.${audioFormat ?? 'mp3'}';
 
   Map<String, dynamic> toJson() => {
+        ..._extra,
         if (sourceFilename != null) 'sourceFilename': sourceFilename,
         if (episode != null) 'episode': episode,
         'durationMs': durationMs,
@@ -77,7 +83,7 @@ class ProjectMeta {
     } catch (_) {
       return ProjectMeta();
     }
-    return ProjectMeta(
+    final meta = ProjectMeta(
       sourceFilename: j['sourceFilename'] as String?,
       episode: j['episode'] as int?,
       durationMs: (j['durationMs'] as num?)?.toInt() ?? 0,
@@ -103,5 +109,8 @@ class ProjectMeta {
                   0.0,
             ),
     );
+    // 只在解析路径收杂键；对象字段值在 toJson 里后写覆盖，永不回退
+    meta._extra = j;
+    return meta;
   }
 }
