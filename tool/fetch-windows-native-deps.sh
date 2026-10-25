@@ -9,6 +9,10 @@ FFPRE="$BD/plugins/ffmpeg_kit_flutter_new/ffmpeg-kit"
 mkdir -p "$BD" "$FFPRE"
 
 MIRRORS=("https://ghfast.top/" "https://gh-proxy.com/" "https://ghproxy.net/")
+# GitHub Actions 上直连 github.com 更稳更快：CI 时镜像列表置空（fetch 直接用原 URL）
+if [ "${CI:-}" = "true" ]; then
+  MIRRORS=("")
+fi
 
 fetch() { # fetch <url> <dest> <md5|-> [size]
   local url=$1 dest=$2 md5=${3:-} minsize=${4:-1000000}

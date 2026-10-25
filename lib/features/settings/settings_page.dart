@@ -9,6 +9,7 @@ import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/core/theme/theme_controller.dart';
 import 'package:peixi/features/settings/llm_channels_section.dart';
+import 'package:peixi/features/settings/update_section.dart';
 import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/ui/widgets/page_header.dart';
 import 'package:peixi/ui/widgets/section_card.dart';
@@ -466,6 +467,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: Space.l),
+                      const UpdateSection(),
                       const SizedBox(height: Space.xl),
                       Center(
                         child: FilledButton.icon(

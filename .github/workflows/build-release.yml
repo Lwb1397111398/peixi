@@ -1,0 +1,76 @@
+# 云端出包 + 自动发版：push main 后自动构建 Windows 安装包并覆盖到 latest Release。
+# App 端按 Release 说明第一行的元数据注释判断版本（见 lib/core/update/）。
+name: build-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release create/upload 必需
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 版本号 = 提交数，必须全量历史
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.1 # 与本机一致，避免引擎/Gradle 版本漂移
+          cache: true
+
+      - name: Flutter 版本确认
+        run: flutter --version
+
+      - name: 静态检查
+        run: flutter analyze --no-fatal-infos
+
+      - name: 单元测试
+        run: flutter test
+
+      - name: 预取 Windows 原生依赖（CI 直连，不走镜像）
+        shell: bash
+        run: bash tool/fetch-windows-native-deps.sh
+
+      - name: 构建 Windows Release
+        shell: bash
+        run: |
+          N=$(git rev-list --count HEAD)
+          echo "versionCode=$N versionName=0.1.$N"
+          flutter build windows --release --build-name=0.1.$N --build-number=$N
+
+      - name: 打包 zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dist/peixi-windows-x64.zip -Force
+
+      - name: 发布到 latest Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          N=$(git rev-list --count HEAD)
+          REPO="$GITHUB_REPOSITORY"
+          {
+            echo "<!-- appupdate versionCode=$N versionName=0.1.$N -->"
+            echo
+            echo "## 更新内容"
+            echo
+            git log -5 --pretty=format:'- %s'
+          } > notes.md
+          if gh release view latest --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload latest dist/peixi-windows-x64.zip --clobber --repo "$REPO"
+            gh release edit latest --title "最新版 0.1.$N" --notes-file notes.md --repo "$REPO"
+            echo "已覆盖更新 latest（0.1.$N）"
+          else
+            gh release create latest dist/peixi-windows-x64.zip \
+              --title "最新版 0.1.$N" --notes-file notes.md --repo "$REPO"
+            echo "已创建 latest（0.1.$N）"
+          fi

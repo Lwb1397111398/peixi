@@ -52,6 +52,9 @@ class SettingsRepository {
   static const _kThemeMode = 'app.theme_mode';
   // 桌面窗口边界 'left,top,width,height'
   static const _kWindowBounds = 'window.bounds';
+  // 应用自更新：上次成功检查的毫秒时间戳（24h 节流）/ 启动自动检查开关
+  static const _kUpdateLastCheck = 'update.last_check_ms';
+  static const _kUpdateAutoCheck = 'update.auto_check';
 
   Future<String?> _get(String key) async =>
       (await (_db.select(_db.settings)..where((t) => t.key.equals(key)))
@@ -183,6 +186,18 @@ class SettingsRepository {
   Future<String> loadThemeModeRaw() async => await _get(_kThemeMode) ?? 'light';
 
   Future<void> saveThemeModeRaw(String raw) => _set(_kThemeMode, raw);
+
+  Future<int?> loadUpdateLastCheckMs() async =>
+      int.tryParse(await _get(_kUpdateLastCheck) ?? '');
+
+  Future<void> saveUpdateLastCheckMs(int ms) =>
+      _set(_kUpdateLastCheck, '$ms');
+
+  Future<bool> loadUpdateAutoCheck() async =>
+      (await _get(_kUpdateAutoCheck) ?? '1') == '1';
+
+  Future<void> saveUpdateAutoCheck(bool v) =>
+      _set(_kUpdateAutoCheck, v ? '1' : '0');
 
   Future<WindowBounds?> loadWindowBounds() async {
     final raw = await _get(_kWindowBounds);

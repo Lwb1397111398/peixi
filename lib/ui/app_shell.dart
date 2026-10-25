@@ -1,23 +1,30 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/theme/tokens.dart';
+import 'package:peixi/core/update/update_checker.dart';
+import 'package:peixi/core/update/update_service.dart';
 import 'package:peixi/features/cards/cards_page.dart';
 import 'package:peixi/features/library/library_page.dart';
 import 'package:peixi/features/review/review_page.dart';
 import 'package:peixi/features/settings/settings_page.dart';
+import 'package:peixi/features/settings/update_dialog.dart';
+import 'package:peixi/providers.dart';
 
 /// 应用外壳：导航在宽屏（≥900）为左侧 NavigationRail，窄屏（手机）为
 /// 底部 NavigationBar，共用同一 IndexedStack（媒体库/卡片集/复盘/设置）。
 /// 内容页（播放器、阅读器、处理详情、校准、SRS 会话）仍从各入口全屏 push，
 /// 会盖住整个外壳——符合"导航常驻、任务页专注"的层级。
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   int _index = 0;
 
   static const _pages = <Widget>[
@@ -26,6 +33,36 @@ class _AppShellState extends State<AppShell> {
     ReviewPage(),
     SettingsPage(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // 启动静默检查更新：让首屏先渲染（5 秒后），24 小时节流，失败不打扰。
+    // 测试环境不挂 Timer：fake_async 不变式要求测试结束时不留未决 Timer。
+    if (!Platform.environment.containsKey('FLUTTER_TEST')) {
+      Future.delayed(const Duration(seconds: 5), _silentUpdateCheck);
+    }
+  }
+
+  Future<void> _silentUpdateCheck() async {
+    if (!mounted) return;
+    try {
+      final repo = ref.read(settingsRepoProvider);
+      if (!await repo.loadUpdateAutoCheck()) return;
+      if (!shouldAutoCheck(
+          await repo.loadUpdateLastCheckMs(), DateTime.now())) {
+        return;
+      }
+      final svc = ref.read(updateServiceProvider);
+      final localCode = await svc.localVersionCode();
+      final info = await svc.check(currentVersionCode: localCode);
+      await repo.saveUpdateLastCheckMs(DateTime.now().millisecondsSinceEpoch);
+      if (info == null || !mounted) return;
+      await showUpdateDialog(context, ref, info, localCode);
+    } on UpdateException {
+      // 自动检查失败保持静默；设置页手动检查会给完整报错
+    } catch (_) {}
+  }
 
   void _select(int i) => setState(() => _index = i);
 
