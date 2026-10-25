@@ -23,19 +23,19 @@
 
 | 项 | 状态 | 位置/值 |
 |---|---|---|
-| Android SDK | ✅ 就绪 | `C:\Users\jingyue\AndroidTools\sdk`（platform-35、build-tools 35、licenses 已接受） |
-| JDK 17 | ✅ 就绪 | `C:\Users\jingyue\AndroidTools\jdk\jdk-17.0.20.1+1` |
-| Gradle 8.11.1 本地包 | ✅ 可参照 | `C:\Users\jingyue\AndroidTools\gradle\gradle-8.11.1` |
-| Flutter SDK zip | ⏳ 由主会话后台下载中 | `C:\Users\jingyue\AndroidTools\dl\flutter_3.47.1-stable.zip`（1,929,093,631 字节） |
+| Android SDK | ✅ 就绪 | `C:\Users\<user>\AndroidTools\sdk`（platform-35、build-tools 35、licenses 已接受） |
+| JDK 17 | ✅ 就绪 | `C:\Users\<user>\AndroidTools\jdk\jdk-17.0.20.1+1` |
+| Gradle 8.11.1 本地包 | ✅ 可参照 | `C:\Users\<user>\AndroidTools\gradle\gradle-8.11.1` |
+| Flutter SDK zip | ⏳ 由主会话后台下载中 | `C:\Users\<user>\AndroidTools\dl\flutter_3.47.1-stable.zip`（1,929,093,631 字节） |
 | Git 仓库 | ✅ 仓库根为 `C:\AI WorkSpace`，本项目在 `陪析/` 子目录 | 不建嵌套仓库 |
 | 镜变参照项目 | ✅ 本机验证过 Android 构建 | AGP 8.7.3 + Kotlin 2.0.21 + compileSdk 35 + JVM 17 |
 
 **每个 shell 会话开始前导出（后续所有命令默认含此环境）：**
 
 ```bash
-export JAVA_HOME="C:/Users/jingyue/AndroidTools/jdk/jdk-17.0.20.1+1"
-export ANDROID_HOME="C:/Users/jingyue/AndroidTools/sdk"
-export PATH="/c/Users/jingyue/AndroidTools/flutter/bin:$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+export JAVA_HOME="C:/Users/<user>/AndroidTools/jdk/jdk-17.0.20.1+1"
+export ANDROID_HOME="C:/Users/<user>/AndroidTools/sdk"
+export PATH="/c/Users/<user>/AndroidTools/flutter/bin:$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
 ---
@@ -78,20 +78,20 @@ export PATH="/c/Users/jingyue/AndroidTools/flutter/bin:$JAVA_HOME/bin:$ANDROID_H
 
 - [ ] **Step 0.1: 确认 zip 完整性**
 
-Run: `ls -la "C:/Users/jingyue/AndroidTools/dl/flutter_3.47.1-stable.zip"`
+Run: `ls -la "C:/Users/<user>/AndroidTools/dl/flutter_3.47.1-stable.zip"`
 Expected: 大小恰为 `1929093631`。若文件不存在或更小，说明主会话下载未完成——等待而非重下。
 
 - [ ] **Step 0.2: 解压到 AndroidTools/flutter**
 
 ```bash
-cd "C:/Users/jingyue/AndroidTools" && tar -xf dl/flutter_3.47.1-stable.zip
+cd "C:/Users/<user>/AndroidTools" && tar -xf dl/flutter_3.47.1-stable.zip
 ```
-Expected: 出现 `C:/Users/jingyue/AndroidTools/flutter/bin/flutter`（约需 2-5 分钟）。
+Expected: 出现 `C:/Users/<user>/AndroidTools/flutter/bin/flutter`（约需 2-5 分钟）。
 
 - [ ] **Step 0.3: 关闭分析上报并验证版本**
 
 ```bash
-"C:/Users/jingyue/AndroidTools/flutter/bin/flutter" config --no-analytics
+"C:/Users/<user>/AndroidTools/flutter/bin/flutter" config --no-analytics
 flutter --version
 ```
 Expected: 输出 `Flutter 3.47.1 • channel stable`。
@@ -131,7 +131,7 @@ cd "C:/AI WorkSpace" && git add "陪析/docs/flutter-doctor-snapshot.txt" && git
 
 ```bash
 cd "C:/AI WorkSpace/陪析"
-flutter create --project-name peixi --org com.jingyue --platforms windows,android .
+flutter create --project-name peixi --org com.<user> --platforms windows,android .
 ```
 Expected: `All done!`，生成 `android/`、`windows/`、`lib/main.dart`、`test/widget_test.dart` 等。
 
@@ -1488,8 +1488,8 @@ Expected: `√ Built build\windows\x64\runner\Release\peixi.exe`。双击 exe �
 - [ ] **Step 7.4: Android Debug 构建冒烟（可选但建议现在做，尽早暴露 Android 构建问题）**
 
 ```bash
-export JAVA_HOME="C:/Users/jingyue/AndroidTools/jdk/jdk-17.0.20.1+1"
-export ANDROID_HOME="C:/Users/jingyue/AndroidTools/sdk"
+export JAVA_HOME="C:/Users/<user>/AndroidTools/jdk/jdk-17.0.20.1+1"
+export ANDROID_HOME="C:/Users/<user>/AndroidTools/sdk"
 flutter build apk --debug
 ```
 Expected: `√ Built build\app\outputs\flutter-apk\app-debug.apk`。首次 Gradle 下载较慢（走腾讯镜像）。

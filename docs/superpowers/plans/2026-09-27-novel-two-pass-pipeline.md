@@ -33,7 +33,7 @@ Flutter + Riverpod + Drift(sqlite) + Dio；Dart 3（switch 表达式/records 可
 ## 基线与执行纪律
 
 - 基线 commit `5755db4`，235 个测试全绿，`dart analyze` 干净。
-- Flutter：`/c/Users/jingyue/AndroidTools/flutter/bin/flutter test <路径>`；分析：`/c/Users/jingyue/AndroidTools/flutter/bin/dart analyze`。
+- Flutter：`/c/Users/<user>/AndroidTools/flutter/bin/flutter test <路径>`；分析：`/c/Users/<user>/AndroidTools/flutter/bin/dart analyze`。
 - **git 仓库根是 `C:/AIWorkSpace` 单体仓**：提交只允许显式 `git add <具体文件>`，**严禁 `git add -A` / `git add .`**。
 - 每个 Task：先写测试（红）→ 实现（绿）→ `dart analyze` 干净 → 按给定 message 提交。
 - 每个 Task 结束时全量测试必须保持通过（数量只增不减，除非本 Task 明确删除旧测试）。
@@ -1672,8 +1672,8 @@ class PipelineStageException implements Exception {
 
 ## Task 14：全量回归 + 冒烟准备 + 推送
 
-1. `/c/Users/jingyue/AndroidTools/flutter/bin/dart analyze` 零问题。
-2. `/c/Users/jingyue/AndroidTools/flutter/bin/flutter test` 全绿（记录最终数量，基线 235 + 本计划新增）。
+1. `/c/Users/<user>/AndroidTools/flutter/bin/dart analyze` 零问题。
+2. `/c/Users/<user>/AndroidTools/flutter/bin/flutter test` 全绿（记录最终数量，基线 235 + 本计划新增）。
 3. grep 检查无残留：`NovelCharacterExtractor|NovelCommentaryGenerator|novelEntryStatusOfStage|novelCast|novelAnnotation` 应零命中（prompts_novel_v2_test 等新测试除外）。
 4. `git status` 核对本计划文件全部已提交；`git push origin master`。
 5. 输出冒烟清单给用户（真渠道手工验证）：导入长篇网文 → 1-2 分钟内可进阅读器且前 10 章有批注 → 边读边出现新批注 → 处理页双泳道/领先徽章/token → 设置页开启 `novel.vectorRecall` 并绑定 embedding 槽位 → 重启 app 续跑无损。
