@@ -19,6 +19,8 @@ void main() {
   /// 删掉全部显式索引（chapters/characters 上的两个已随表删除）。
   /// 回拨 user_version 重开后，迁移链会从头加列/建表/建索引。
   Future<void> downgradeToV1Shape(AppDatabase db) async {
+    // v6 表也要删：全量索引重建（from<2 块）会重建 bookmarks 索引，留着会撞
+    await db.customStatement('DROP TABLE IF EXISTS bookmarks');
     await db.customStatement('DROP TABLE character_events');
     await db.customStatement('DROP TABLE chapter_embeddings');
     await db.customStatement('DROP TABLE llm_channels');

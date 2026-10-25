@@ -302,6 +302,58 @@ void main() {
         closeTo(20 / 21, 0.01));
   });
 
+  testWidgets('全书搜索：输入命中 → 结果带章名 → 点击跳章滚到段落', (tester) async {
+    await seed();
+    await tester.pumpWidget(wrap(const ReaderPage(projectId: 1)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.search));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('search-field')), '店家');
+    await tester.pump(const Duration(milliseconds: 500)); // 过 400ms 防抖
+    await tester.pumpAndSettle();
+
+    // 命中在第二章，显示章名与片段
+    expect(find.text('第二章 客栈'), findsOneWidget);
+    expect(find.textContaining('店家压低了声音'), findsOneWidget);
+
+    await tester.tap(find.textContaining('店家压低了声音'));
+    await tester.pumpAndSettle();
+    // 跳到第二章
+    expect(find.text('店家压低了声音。'), findsOneWidget);
+    expect(find.text('少年背剑而行。'), findsNothing);
+  });
+
+  testWidgets('长按段落加书签 → 抽屉书签页签可见 → 可删除', (tester) async {
+    await seed();
+    await tester.pumpWidget(wrap(const ReaderPage(projectId: 1)));
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('风起于青萍之末。'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('bookmark-note-field')), '伏笔');
+    await tester.tap(find.text('保存书签'));
+    await tester.pumpAndSettle();
+
+    final marks = await db.select(db.bookmarks).get();
+    expect(marks, hasLength(1));
+    expect(marks.single.note, '伏笔');
+
+    // 抽屉切到书签页签，显示段落与备注
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('书签'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('风起于青萍之末'), findsWidgets);
+    expect(find.textContaining('伏笔'), findsOneWidget);
+
+    // 删除书签
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    await tester.pumpAndSettle();
+    expect(await db.select(db.bookmarks).get(), isEmpty);
+  });
+
   testWidgets('目录按卷分组：卷头渲染、卷下章归属', (tester) async {
     await seed();
     await db.into(db.chapters).insert(ChaptersCompanion.insert(

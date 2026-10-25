@@ -59,6 +59,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   // 目录抽屉：当前章 ListTile 的锚点（打开抽屉时滚到可见）
   final _drawerCurrentKey = GlobalKey();
 
+  // v6 抽屉双页签（0=目录 1=书签）与书签缓存（打开抽屉/增删后刷新）
+  int _drawerTab = 0;
+  List<BookmarkHit> _bookmarks = [];
+
   // L4 段间卡片状态（paraId 键）
   final _l4Controllers = <int, TextEditingController>{};
   final _l4Answered = <int, String?>{}; // null=未作答，''=跳过
@@ -115,7 +119,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     }
   }
 
-  Future<void> _openChapter(int idx, {double? restoreOffset}) async {
+  Future<void> _openChapter(int idx,
+      {double? restoreOffset, int? focusParaId}) async {
     setState(() => _loading = true);
     _chapterIdx = idx;
     _paragraphs = await _repo.paragraphs(_chapters[idx].id);
@@ -125,7 +130,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     setState(() => _loading = false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
-      if (restoreOffset != null) {
+      if (focusParaId != null) {
+        // 搜索/书签跳转：滚到命中段落（偏上留上下文）
+        final ctx = GlobalObjectKey('para-$focusParaId').currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(ctx,
+              alignment: 0.25,
+              duration: const Duration(milliseconds: 250));
+        }
+      } else if (restoreOffset != null) {
         _scroll.jumpTo(
             restoreOffset.clamp(0.0, _scroll.position.maxScrollExtent));
       } else if (_scroll.offset > 0) {
@@ -134,6 +147,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       _updateProgress();
       _persistProgress();
     });
+  }
+
+  /// 跳到全书某段（搜索/书签）：按全书段落序号定位章，再滚到段落
+  Future<void> _jumpToPara({required int paraIdx, required int paraId}) async {
+    final idx = _chapters.indexWhere(
+        (c) => c.startPara <= paraIdx && c.endPara >= paraIdx);
+    if (idx < 0) return;
+    if (idx == _chapterIdx) {
+      final ctx = GlobalObjectKey('para-$paraId').currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            alignment: 0.25, duration: const Duration(milliseconds: 250));
+      }
+      return;
+    }
+    await _openChapter(idx, focusParaId: paraId);
   }
 
   /// 滚动中更新本章/全书进度（ValueNotifier，不 setState）
@@ -361,6 +390,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                 ),
               ),
               IconButton(
+                  icon: Icon(Icons.search, color: fg.withValues(alpha: .75)),
+                  tooltip: '全书搜索',
+                  onPressed: _showSearchSheet),
+              IconButton(
                   icon: Icon(Icons.menu, color: fg.withValues(alpha: .75)),
                   tooltip: '目录',
                   onPressed: _openDrawer),
@@ -471,6 +504,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   }
 
   void _openDrawer() {
+    _refreshBookmarks();
     _scaffoldKey.currentState?.openDrawer();
     // 抽屉 build 后把当前章滚到可见（偏上 1/3 处，前后章名留上下文）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -503,14 +537,32 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       child: SafeArea(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
-            child: Text('目录',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge!
-                    .copyWith(color: fg)),
+            padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.xs),
+            child: Row(children: [
+              Expanded(
+                child: Text('目录',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge!
+                        .copyWith(color: fg)),
+              ),
+              SegmentedButton<int>(
+                style: ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: WidgetStatePropertyAll(fg),
+                ),
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('章节')),
+                  ButtonSegment(value: 1, label: Text('书签')),
+                ],
+                selected: {_drawerTab},
+                onSelectionChanged: (s) =>
+                    setState(() => _drawerTab = s.first),
+              ),
+            ]),
           ),
-          if (_lastReadingChapterIdx >= 0 &&
+          if (_drawerTab == 0 &&
+              _lastReadingChapterIdx >= 0 &&
               _lastReadingChapterIdx != _chapterIdx)
             Padding(
               padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
@@ -525,7 +577,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               ),
             ),
           Expanded(
-            child: ListView.builder(
+            child: _drawerTab == 1
+                ? _bookmarkDrawerList(fg)
+                : ListView.builder(
               padding: const EdgeInsets.symmetric(
                   horizontal: Space.s, vertical: Space.m),
               itemCount: rows.length,
@@ -578,6 +632,64 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     );
   }
 
+  /// 抽屉「书签」页签：新→旧；点条目直达段落，长按/尾按钮可删
+  Widget _bookmarkDrawerList(Color fg) {
+    if (_bookmarks.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(Space.xl),
+          child: Text('长按正文段落可以添加书签',
+              style: TextStyle(
+                  fontSize: 12, color: fg.withValues(alpha: .55))),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(
+          horizontal: Space.s, vertical: Space.m),
+      itemCount: _bookmarks.length,
+      itemBuilder: (_, i) {
+        final b = _bookmarks[i];
+        return ListTile(
+          dense: true,
+          shape: RoundedRectangleBorder(borderRadius: AppRadius.rMd),
+          leading: Icon(Icons.bookmark_outline,
+              size: 18, color: fg.withValues(alpha: .65)),
+          title: Text(
+            b.paraContent,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: fg, fontSize: 13),
+          ),
+          subtitle: Text(
+            [
+              if (b.chapterTitle != null) b.chapterTitle!,
+              if (b.note != null && b.note!.isNotEmpty) '备注：${b.note}',
+            ].join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: fg.withValues(alpha: .55), fontSize: 11),
+          ),
+          trailing: IconButton(
+            icon: Icon(Icons.delete_outline,
+                size: 16, color: fg.withValues(alpha: .5)),
+            tooltip: '删除书签',
+            onPressed: () async {
+              await _repo.removeBookmark(b.id);
+              await _refreshBookmarks();
+            },
+          ),
+          onTap: () {
+            Navigator.pop(context);
+            final idx = _chapters.indexWhere((c) => c.id == b.chapterId);
+            if (idx < 0 || b.paraIdx < 0) return;
+            _jumpToPara(paraIdx: b.paraIdx, paraId: b.paraId);
+          },
+        );
+      },
+    );
+  }
+
   String _chapterLabel(int i) =>
       _chapters[i].title ?? '第${i + 1}部分';
 
@@ -590,14 +702,18 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final l4 = anns.where((a) => a.type == 'L4').toList();
 
     return Column(
+      key: GlobalObjectKey('para-${para.id}'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          para.content,
-          style: TextStyle(
-              fontSize: _prefs.fontSize,
-              height: _prefs.lineHeight,
-              color: fg),
+        GestureDetector(
+          onLongPress: () => _showBookmarkSheet(para),
+          child: Text(
+            para.content,
+            style: TextStyle(
+                fontSize: _prefs.fontSize,
+                height: _prefs.lineHeight,
+                color: fg),
+          ),
         ),
         if (bubbles.isNotEmpty) ...[
           const SizedBox(height: Space.xs),
@@ -914,6 +1030,214 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               ),
       ),
     );
+  }
+
+  // ---------- v6 全书搜索 + 书签 ----------
+
+  /// 全书搜索弹层：输入防抖 400ms → LIKE 查询 → 章名 + 命中片段高亮；
+  /// 点击结果关弹层并跳章滚到命中段落
+  void _showSearchSheet() {
+    final kwCtrl = TextEditingController();
+    Timer? debounce;
+    // 弹层局部状态：null=未搜索；[]=无结果
+    List<SearchHit>? results;
+    var searching = false;
+    var lastKw = '';
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetCtx) => StatefulBuilder(builder: (ctx, setSheet) {
+        Future<void> runSearch(String kw) async {
+          lastKw = kw;
+          if (kw.trim().isEmpty) {
+            setSheet(() => results = null);
+            return;
+          }
+          setSheet(() => searching = true);
+          final r = await _repo.searchParagraphs(widget.projectId, kw);
+          if (!ctx.mounted) return;
+          setSheet(() {
+            searching = false;
+            results = r;
+          });
+        }
+
+        return SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.85,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+                Space.xl, Space.m, Space.xl, Space.m),
+            child: Column(children: [
+              TextField(
+                key: const Key('search-field'),
+                controller: kwCtrl,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: '搜索全书内容…',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: IconButton(
+                      icon: const Icon(Icons.close),
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.pop(ctx)),
+                  border: OutlineInputBorder(borderRadius: AppRadius.rMd),
+                ),
+                onChanged: (v) {
+                  debounce?.cancel();
+                  debounce = Timer(
+                      const Duration(milliseconds: 400), () => runSearch(v));
+                },
+              ),
+              const SizedBox(height: Space.s),
+              Expanded(
+                child: searching
+                    ? const Center(child: CircularProgressIndicator())
+                    : results == null
+                        ? Center(
+                            child: Text('输入关键词搜索全书',
+                                style: Theme.of(ctx).textTheme.bodySmall))
+                        : results!.isEmpty
+                            ? Center(
+                                child: Text('没有找到「$lastKw」',
+                                    style:
+                                        Theme.of(ctx).textTheme.bodySmall))
+                            : ListView.builder(
+                                itemCount: results!.length,
+                                itemBuilder: (_, i) {
+                                  final hit = results![i];
+                                  return ListTile(
+                                    dense: true,
+                                    title: _hitText(hit, lastKw),
+                                    subtitle: Text(
+                                      hit.chapterTitle ?? '（无章名）',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    onTap: () {
+                                      Navigator.pop(ctx);
+                                      _jumpToPara(
+                                          paraIdx: hit.paraIdx,
+                                          paraId: hit.paraId);
+                                    },
+                                  );
+                                },
+                              ),
+              ),
+            ]),
+          ),
+        );
+      }),
+    ).whenComplete(() => debounce?.cancel());
+    // kwCtrl 不手动 dispose：弹层退出动画期间 TextField 仍引用 controller，
+    // 立即 dispose 会触发 "used after being disposed"；弹层关闭后无引用，交给 GC。
+  }
+
+  /// 命中片段：命中处前 20 字 ~ 后 40 字，关键词高亮加粗
+  Widget _hitText(SearchHit hit, String kw) {
+    final c = hit.content;
+    final at = c.toLowerCase().indexOf(kw.toLowerCase());
+    if (at < 0) {
+      return Text(c, maxLines: 2, overflow: TextOverflow.ellipsis);
+    }
+    final start = at > 20 ? at - 20 : 0;
+    final end =
+        (at + kw.length + 40) < c.length ? at + kw.length + 40 : c.length;
+    final scheme = Theme.of(context).colorScheme;
+    return Text.rich(
+      TextSpan(children: [
+        if (start > 0) const TextSpan(text: '…'),
+        TextSpan(text: c.substring(start, at)),
+        TextSpan(
+          text: c.substring(at, at + kw.length),
+          style: TextStyle(
+              color: scheme.primary, fontWeight: FontWeight.w700),
+        ),
+        TextSpan(text: c.substring(at + kw.length, end)),
+        if (end < c.length) const TextSpan(text: '…'),
+      ]),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  Future<void> _refreshBookmarks() async {
+    final list = await _repo.bookmarksOf(widget.projectId);
+    if (!mounted) return;
+    setState(() => _bookmarks = list);
+  }
+
+  /// 长按段落：加书签（可选一句备注）/ 已有书签则可移除
+  Future<void> _showBookmarkSheet(Paragraph para) async {
+    final existing = await _repo.bookmarkIdOf(para.id);
+    if (!mounted) return;
+    if (existing != null) {
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetCtx) => SafeArea(
+          child: ListTile(
+            leading: Icon(Icons.bookmark_remove_outlined,
+                color: Theme.of(context).colorScheme.error),
+            title: const Text('移除书签'),
+            subtitle: Text(para.content,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            onTap: () async {
+              await _repo.removeBookmark(existing);
+              if (!mounted) return;
+              Navigator.pop(context);
+              await _refreshBookmarks();
+            },
+          ),
+        ),
+      );
+      return;
+    }
+    final noteCtrl = TextEditingController();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetCtx) => Padding(
+        padding: EdgeInsets.fromLTRB(Space.xl, Space.s, Space.xl,
+            Space.xl + MediaQuery.of(sheetCtx).viewInsets.bottom),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.bookmark_add_outlined),
+            title: const Text('加书签'),
+            subtitle: Text(para.content,
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+          TextField(
+            key: const Key('bookmark-note-field'),
+            controller: noteCtrl,
+            maxLines: 2,
+            decoration:
+                const InputDecoration(hintText: '写一句备注（可留空）'),
+          ),
+          const SizedBox(height: Space.s),
+          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            TextButton(
+                onPressed: () => Navigator.pop(sheetCtx),
+                child: const Text('取消')),
+            const SizedBox(width: Space.s),
+            FilledButton(
+                onPressed: () async {
+                  final note = noteCtrl.text.trim();
+                  await _repo.addBookmark(
+                      projectId: widget.projectId,
+                      paraId: para.id,
+                      note: note.isEmpty ? null : note);
+                  if (!mounted) return;
+                  Navigator.pop(context);
+                  await _refreshBookmarks();
+                },
+                child: const Text('保存书签')),
+          ]),
+        ]),
+      ),
+    );
+    // noteCtrl 同搜索框：退出动画期间仍被引用，不手动 dispose（交 GC）。
   }
 
   /// 角色色为校准页写库的 hex（存量数据），缺省回主色

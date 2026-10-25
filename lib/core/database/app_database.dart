@@ -161,6 +161,19 @@ class Annotations extends Table {
   TextColumn get contentJson => text()();
 }
 
+/// v6：段级书签（阅读器长按段落添加，可选一句备注；目录抽屉「书签」页签展示）
+@TableIndex(name: 'idx_bookmarks_project', columns: {#projectId})
+@TableIndex(name: 'idx_bookmarks_para', columns: {#paraId})
+class Bookmarks extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get projectId =>
+      integer().references(Projects, #id, onDelete: KeyAction.cascade)();
+  IntColumn get paraId =>
+      integer().references(Paragraphs, #id, onDelete: KeyAction.cascade)();
+  TextColumn get note => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
 /// v5：人物关键事件时间线（批注趟"前文呼应"的召回源，设计文档 §5）
 @TableIndex(name: 'idx_character_events_project', columns: {#projectId})
 @TableIndex(name: 'idx_character_events_character', columns: {#characterId})
@@ -238,6 +251,7 @@ class LlmChannels extends Table {
   Chapters,
   Paragraphs,
   Annotations,
+  Bookmarks,
   CharacterEvents,
   ChapterEmbeddings,
   Settings,
@@ -286,8 +300,9 @@ class AppDatabase extends _$AppDatabase {
             });
           }
           if (from < 6) {
-            // v5→v6：分章识别升级——章归属卷（chapters.volume，阅读器目录分组用）
+            // v5→v6：分章识别升级——章归属卷（chapters.volume）+ 段级书签表
             await m.addColumn(chapters, chapters.volume);
+            await m.createTable(bookmarks);
           }
           if (from < 2) {
             // v1→v2：为按项目/章节/段落/场景等外键式查询补齐索引（v1 为全表扫描）。

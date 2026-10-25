@@ -79,6 +79,12 @@ void main() {
     await (db.update(db.chapters)..where((t) => t.id.equals(1)))
         .write(const ChaptersCompanion(volume: Value('第一卷')));
     expect((await db.select(db.chapters).get()).first.volume, '第一卷');
+    // v6 同批：bookmarks 表由迁移创建且可写（先补一行段落满足外键）
+    await db.into(db.paragraphs).insert(ParagraphsCompanion.insert(
+        projectId: 1, idx: 0, content: '旧段落'));
+    await db.into(db.bookmarks).insert(
+        BookmarksCompanion.insert(projectId: 1, paraId: 1, note: const Value('备注')));
+    expect(await db.select(db.bookmarks).get(), hasLength(1));
     final version =
         await db.customSelect('SELECT * FROM pragma_user_version').getSingle();
     expect(version.read<int>('user_version'), 6);
