@@ -256,8 +256,12 @@ class UpdateService {
 
     final batPath = p.join(work.path, 'apply_update.bat');
     await File(batPath).writeAsString(buildUpdateBatScript(), flush: true);
-    await Process.start('cmd.exe', ['/d', '/c', batPath, dir, root, exeName],
-        mode: ProcessStartMode.detached, runInShell: false);
+    // 用工作目录+相对名启动：cmd /c 的首参带引号时引号解析规则会吞引号
+    // （用户名含空格即触发），相对名永不为引号开头；路径经参数传 Unicode 安全。
+    await Process.start('cmd.exe', ['/d', '/c', 'apply_update.bat', dir, root, exeName],
+        mode: ProcessStartMode.detached,
+        runInShell: false,
+        workingDirectory: work.path);
   }
 
   /// 替换批处理。内容必须纯 ASCII：cmd 按 GBK 解析批处理，中文会乱码；
