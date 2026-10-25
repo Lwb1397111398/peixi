@@ -21,6 +21,18 @@ void main() {
     expect(back.readingProgress!.scrollOffset, 345.5);
   });
 
+  test('progressPercent 编码往返；旧数据无该键解析为 null', () {
+    final meta = ProjectMeta(sourceFilename: 'a.txt')
+      ..readingProgress =
+          ReadingProgress(chapterIdx: 3, scrollOffset: 8.0, progressPercent: 0.456);
+    final back = ProjectMeta.fromJson(meta.encode());
+    expect(back.readingProgress!.progressPercent, 0.456);
+    // 旧格式（v6 前的库）没有 progressPercent 键
+    final old = ProjectMeta.fromJson(
+        '{"reading":{"chapterIdx":3,"scrollOffset":8.0}}');
+    expect(old.readingProgress!.progressPercent, isNull);
+  });
+
   test('无 reading 字段/损坏 meta 解析为 null 不抛', () {
     expect(
         ProjectMeta.fromJson('{"sourceFilename":"a"}').readingProgress, isNull);

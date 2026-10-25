@@ -437,7 +437,8 @@ class _ProjectCard extends ConsumerWidget {
                   ],
                   Expanded(
                     child: Text(
-                      statusLabel(status, isNovel: true),
+                      '${_readPctPrefix ?? ''}'
+                      '${statusLabel(status, isNovel: true)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
@@ -516,6 +517,15 @@ class _ProjectCard extends ConsumerWidget {
     final meta = NovelMeta.fromJson(project.metaJson);
     if (meta.chapterCount <= 0) return null;
     return '批注 ${meta.annotatedChapters}/${meta.chapterCount} 章';
+  }
+
+  /// 阅读进度前缀（v6：阅读器持久化 progressPercent，未读过为 null 不显示）
+  String? get _readPctPrefix {
+    if (project.type != 'novel') return null;
+    final p = ProjectMeta.fromJson(project.metaJson).readingProgress;
+    final pct = p?.progressPercent;
+    if (pct == null || pct <= 0) return null;
+    return '已读 ${(pct * 100).round()}% · ';
   }
 
   /// 「开始阅读」常驻入口（§6.3 导入即可读）：与卡片 onTap 走同一闸门

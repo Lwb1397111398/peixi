@@ -209,4 +209,120 @@ void main() {
     expect(find.text('余则成'), findsOneWidget);
     expect(find.text('热血少年剑客'), findsOneWidget);
   });
+
+  testWidgets('章尾「下一章」接续：滚到底出现按钮，点击进下一章', (tester) async {
+    await seed();
+    await tester.pumpWidget(wrap(const ReaderPage(projectId: 1)));
+    await tester.pumpAndSettle();
+
+    // 初始在第一章顶部，下一章按钮未滚到不可见区域（offscreen 但已 build）
+    expect(find.text('下一章 · 第二章 客栈'), findsOneWidget);
+    await tester.dragUntilVisible(
+        find.text('下一章 · 第二章 客栈'),
+        find.byType(ListView),
+        const Offset(0, -200));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('下一章 · 第二章 客栈'));
+    await tester.pumpAndSettle();
+    expect(find.text('店家压低了声音。'), findsOneWidget);
+    // 末章章尾是收尾文案，不再是下一章按钮
+    expect(find.text('已是最后一章'), findsOneWidget);
+    expect(find.text('下一章 · 第二章 客栈'), findsNothing);
+  });
+
+  testWidgets('沉浸模式：点正文收起顶/底栏，再点恢复', (tester) async {
+    await seed();
+    await tester.pumpWidget(wrap(const ReaderPage(projectId: 1)));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+    expect(find.textContaining('本章'), findsOneWidget);
+
+    await tester.tap(find.text('少年背剑而行。'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.arrow_back), findsNothing, reason: '沉浸收起顶栏');
+    expect(find.textContaining('本章'), findsNothing, reason: '沉浸收起底栏');
+    // 沉浸时正文照常渲染、批注气泡仍可点
+    expect(find.text('少年背剑而行。'), findsOneWidget);
+
+    await tester.tap(find.text('少年背剑而行。'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.arrow_back), findsOneWidget, reason: '再点恢复');
+    expect(find.textContaining('本章'), findsOneWidget);
+  });
+
+  testWidgets('底部进度信息：本章/全书百分比随滚动更新并持久化', (tester) async {
+    // 长章种子：第一章 20 段（超测试视口可滚动），第二章 1 段，全书 21 段
+    await db.into(db.projects).insert(ProjectsCompanion.insert(
+        type: 'novel', title: '长书', sourcePath: '/long.txt', status: 'READY'));
+    await db.into(db.chapters).insert(ChaptersCompanion.insert(
+        projectId: 1,
+        idx: 0,
+        title: const Value('第一章 长路'),
+        startPara: 0,
+        endPara: 19));
+    await db.into(db.chapters).insert(ChaptersCompanion.insert(
+        projectId: 1,
+        idx: 1,
+        title: const Value('第二章 客栈'),
+        startPara: 20,
+        endPara: 20));
+    for (var i = 0; i < 20; i++) {
+      await db.into(db.paragraphs).insert(ParagraphsCompanion.insert(
+          projectId: 1,
+          chapterId: const Value(1),
+          idx: i,
+          content: '少年背剑而行，翻过一座又一座山丘，第$i程。'));
+    }
+    await db.into(db.paragraphs).insert(ParagraphsCompanion.insert(
+        projectId: 1, chapterId: const Value(2), idx: 20, content: '店家压低了声音。'));
+
+    await tester.pumpWidget(wrap(const ReaderPage(projectId: 1)));
+    await tester.pumpAndSettle();
+
+    // 章首：本章 0%，全书 0%
+    expect(find.text('本章 0% · 全书 0%'), findsOneWidget);
+
+    await tester.dragUntilVisible(
+        find.text('下一章 · 第二章 客栈'),
+        find.byType(ListView),
+        const Offset(0, -200));
+    await tester.pumpAndSettle();
+    // 滚到章尾：本章 100%，全书 = (0 + 1.0*20)/21 ≈ 95%
+    expect(find.text('本章 100% · 全书 95%'), findsOneWidget);
+
+    // 进度持久化：meta reading.progressPercent 已写入
+    final row =
+        await (db.select(db.projects)..where((t) => t.id.equals(1)))
+            .getSingle();
+    final reading =
+        (jsonDecode(row.metaJson!) as Map)['reading'] as Map;
+    expect((reading['progressPercent'] as num).toDouble(),
+        closeTo(20 / 21, 0.01));
+  });
+
+  testWidgets('目录按卷分组：卷头渲染、卷下章归属', (tester) async {
+    await seed();
+    await db.into(db.chapters).insert(ChaptersCompanion.insert(
+        projectId: 1,
+        idx: 2,
+        title: const Value('第三章 变故'),
+        volume: const Value('第二卷 云涌'),
+        startPara: 3,
+        endPara: 3));
+    await db.into(db.paragraphs).insert(ParagraphsCompanion.insert(
+        projectId: 1, chapterId: const Value(3), idx: 3, content: '夜里起了风。'));
+    await tester.pumpWidget(wrap(const ReaderPage(projectId: 1)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    // 前两章无卷 → 无卷头；第三章带卷 → 卷头渲染
+    expect(find.text('第二卷 云涌'), findsOneWidget);
+
+    await tester.tap(find.text('第三章 变故'));
+    await tester.pumpAndSettle();
+    expect(find.text('夜里起了风。'), findsOneWidget);
+  });
 }

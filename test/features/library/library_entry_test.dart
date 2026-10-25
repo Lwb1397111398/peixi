@@ -42,12 +42,16 @@ void main() {
   // （同 widget_test.dart 约定）；tearDown 兜底纯 db 测试。
   tearDown(closeDb);
 
-  Future<int> seedNovel({required String status, String? failedStage}) async {
-    final meta = jsonEncode(const {
+  Future<int> seedNovel(
+      {required String status,
+      String? failedStage,
+      Map<String, dynamic> metaExtra = const {}}) async {
+    final meta = jsonEncode({
       'paraCount': 3,
       'charCount': 120,
       'chapterCount': 10,
       'annotatedChapters': 3,
+      ...metaExtra,
     });
     final id = await db.into(db.projects).insert(ProjectsCompanion.insert(
           type: 'novel',
@@ -162,5 +166,15 @@ void main() {
         libraryEntryGate(
             await projectRow(failed), ProjectStatus.fromDb('FAILED')),
         isA<ProcessingPage>());
+  });
+  testWidgets('小说卡片显示已读百分比（v6 progressPercent）', (tester) async {
+    await seedNovel(status: 'IMPORTED', metaExtra: const {
+      'reading': {'chapterIdx': 2, 'scrollOffset': 0.0, 'progressPercent': 0.45},
+    });
+    await tester.pumpWidget(wrap(const LibraryPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('已读 45%'), findsOneWidget);
+    await closeDb();
   });
 }

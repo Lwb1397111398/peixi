@@ -33,17 +33,19 @@ class ReaderRepository {
     return ProjectMeta.fromJson(row.metaJson).readingProgress;
   }
 
-  Future<void> saveReadingProgress(
-      int projectId,
+  Future<void> saveReadingProgress(int projectId,
       {required int chapterIdx,
-      required double scrollOffset}) async {
+      required double scrollOffset,
+      double? progressPercent}) async {
     final row = await (db.select(db.projects)
           ..where((t) => t.id.equals(projectId)))
         .getSingleOrNull();
     if (row == null) return;
     final meta = ProjectMeta.fromJson(row.metaJson)
       ..readingProgress = ReadingProgress(
-          chapterIdx: chapterIdx, scrollOffset: scrollOffset);
+          chapterIdx: chapterIdx,
+          scrollOffset: scrollOffset,
+          progressPercent: progressPercent);
     await (db.update(db.projects)..where((t) => t.id.equals(projectId)))
         .write(ProjectsCompanion(metaJson: Value(meta.encode())));
   }

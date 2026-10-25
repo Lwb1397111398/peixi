@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/settings/app_prefs.dart';
@@ -11,13 +13,16 @@ import 'package:peixi/ui/widgets/empty_state.dart';
 import 'package:peixi/ui/widgets/loading_view.dart';
 import 'package:peixi/ui/widgets/sheet_scaffold.dart';
 import 'package:peixi/providers.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 /// 小说阅读器（设计稿 8.4）：
-/// 正文纵向滚动（字号/行距/背景可调含夜间）；段落尾部 L1-L4 彩色气泡角标，
+/// 正文纵向滚动（字号/行距/边距/背景可调含夜间）；段落尾部 L1-L4 彩色气泡角标，
 /// 点击弹底部卡片；L4 为段间展开卡片（作答/跳过写 qa_records）；
-/// 顶部章节抽屉；右上本书人物列表（点击看人设）。
+/// 顶部章节抽屉（按卷分组）；右上本书人物列表（点击看人设）。
 /// 书页三主题（paper/sepia/night）是用户可配置项，色值为既有持久化数据，
 /// 不随全局主题变化；页头与抽屉随书页色调适配（"暗壳亮页"反之亦然）。
+/// v6 阅读体验升级：点正文中央沉浸（顶/底栏收起）；章尾「下一章」接续；
+/// 底部本章/全书进度；屏幕常亮；目录当前章滚到可见 + 上次读到快跳。
 class ReaderPage extends ConsumerStatefulWidget {
   const ReaderPage({super.key, required this.projectId});
   final int projectId;
@@ -42,6 +47,17 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   final _scroll = ScrollController();
   double? _pendingScrollOffset;
   int _lastReadingChapterIdx = -1;
+
+  // v6 进度：本章/全书 0~1（ValueNotifier 局部刷新，滚动不重建整页）
+  final _chapterPct = ValueNotifier<double>(0);
+  final _bookPct = ValueNotifier<double>(0);
+  int _totalParas = 0;
+
+  // v6 沉浸模式：点正文中央切换顶/底栏收起（微信读书式）
+  bool _immersive = false;
+
+  // 目录抽屉：当前章 ListTile 的锚点（打开抽屉时滚到可见）
+  final _drawerCurrentKey = GlobalKey();
 
   // L4 段间卡片状态（paraId 键）
   final _l4Controllers = <int, TextEditingController>{};
@@ -72,6 +88,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   void initState() {
     super.initState();
     _repo = ReaderRepository(ref.read(databaseProvider));
+    // 阅读时屏幕常亮（微信读书同款体验；退出阅读页恢复系统设置）
+    WakelockPlus.enable();
     _init();
   }
 
@@ -79,6 +97,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     _prefs = await ref.read(settingsRepoProvider).loadReaderPrefs();
     _chapters = await _repo.chapters(widget.projectId);
     _cast = await _repo.cast(widget.projectId);
+    // 全书段落数 = 末章 endPara+1（导入时 startPara/endPara 是全书全局序号）
+    _totalParas = _chapters.isEmpty ? 0 : _chapters.last.endPara + 1;
     final saved = await _repo.readingProgress(widget.projectId);
     if (saved != null &&
         saved.chapterIdx >= 0 &&
@@ -111,14 +131,39 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       } else if (_scroll.offset > 0) {
         _scroll.jumpTo(0);
       }
+      _updateProgress();
       _persistProgress();
     });
+  }
+
+  /// 滚动中更新本章/全书进度（ValueNotifier，不 setState）
+  void _updateProgress() {
+    if (!_scroll.hasClients || _chapters.isEmpty) return;
+    final max = _scroll.position.maxScrollExtent;
+    final cPct = max <= 0 ? 1.0 : (_scroll.offset / max).clamp(0.0, 1.0);
+    _chapterPct.value = cPct;
+    final ch = _chapters[_chapterIdx];
+    final span = ch.endPara - ch.startPara + 1;
+    _bookPct.value = _totalParas <= 0
+        ? 0
+        : ((ch.startPara + cPct * span) / _totalParas).clamp(0.0, 1.0);
   }
 
   void _persistProgress() {
     if (!_scroll.hasClients) return;
     unawaited(_repo.saveReadingProgress(widget.projectId,
-        chapterIdx: _chapterIdx, scrollOffset: _scroll.offset));
+        chapterIdx: _chapterIdx,
+        scrollOffset: _scroll.offset,
+        progressPercent: _bookPct.value));
+  }
+
+  /// 点正文中央切换沉浸（微信读书式：顶/底栏收起，再点恢复）
+  void _toggleImmersive() {
+    setState(() => _immersive = !_immersive);
+    if (Platform.isAndroid || Platform.isIOS) {
+      SystemChrome.setEnabledSystemUIMode(
+          _immersive ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
+    }
   }
 
   /// 批注随到随显：防抖后重查章级断点与当前章批注并 setState
@@ -169,6 +214,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     _reloadDebounce?.cancel();
     _reloadDeadline?.cancel();
     _scroll.dispose();
+    _chapterPct.dispose();
+    _bookPct.dispose();
+    WakelockPlus.disable();
     for (final c in _l4Controllers.values) {
       c.dispose();
     }
@@ -198,118 +246,340 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
         !_loading && _chapters.isNotEmpty && !chapterAnnotDone && pipelineBusy;
     final bg = _bgColors[_prefs.theme]!;
     final fg = _textColors[_prefs.theme]!;
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: bg,
-      appBar: AppBar(
+    // 浅色书页用深色状态栏图标，深色反之（沉浸收起后由系统全屏模式接管）
+    final overlay = _prefs.theme == ReaderTheme.paper
+        ? SystemUiOverlayStyle.dark
+        : SystemUiOverlayStyle.light;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlay,
+      child: Scaffold(
+        key: _scaffoldKey,
         backgroundColor: bg,
-        foregroundColor: fg,
-        titleTextStyle: Theme.of(context)
-            .textTheme
-            .titleLarge!
-            .copyWith(color: fg),
-        iconTheme: IconThemeData(color: fg.withValues(alpha: 0.75)),
-        actionsIconTheme: IconThemeData(color: fg.withValues(alpha: 0.75)),
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        title: Text(
-          _chapters.isEmpty
-              ? '阅读器'
-              : (_chapters[_chapterIdx].title ?? '第${_chapterIdx + 1}部分'),
-        ),
-        leading: IconButton(
-            icon: const Icon(Icons.menu),
-            onPressed: () => _scaffoldKey.currentState?.openDrawer()),
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.groups),
-              tooltip: '本书人物',
-              onPressed: _showCastSheet),
-          IconButton(
-              icon: const Icon(Icons.text_fields),
-              tooltip: '阅读设置',
-              onPressed: _showPrefsSheet),
-        ],
-      ),
-      drawer: _buildChapterDrawer(fg, bg),
-      body: _loading
-          ? const LoadingView()
-          : _chapters.isEmpty
-              ? EmptyState(
-                  icon: Icons.menu_book_outlined,
-                  title: '本书没有章节',
-                  message: '重新导入这本小说可能可以修复；已有批注与卡片不受影响。',
-                )
-              : Column(children: [
-                  if (showHint)
-                    const Material(
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 4),
-                          child: Center(
-                              child: Text('本章批注生成中…',
-                                  style: TextStyle(fontSize: 12))),
+        drawer: _buildChapterDrawer(fg, bg),
+        body: _loading
+            ? const LoadingView()
+            : _chapters.isEmpty
+                ? EmptyState(
+                    icon: Icons.menu_book_outlined,
+                    title: '本书没有章节',
+                    message: '重新导入这本小说可能可以修复；已有批注与卡片不受影响。',
+                  )
+                : Column(children: [
+                    _topBar(bg, fg),
+                    if (showHint)
+                      Material(
+                        color: bg,
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Center(
+                                child: Text('本章批注生成中…',
+                                    style: TextStyle(
+                                        fontSize: 12, color: fg))),
+                          ),
+                        ),
+                      ),
+                    Expanded(
+                      child: GestureDetector(
+                        // 点正文区域切换沉浸；气泡/L4 卡片的点击在子级
+                        // 先命中，不会误触发
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _toggleImmersive,
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: (n) {
+                            if (n is ScrollUpdateNotification ||
+                                n is ScrollEndNotification) {
+                              _updateProgress();
+                            }
+                            if (n is ScrollEndNotification) {
+                              _persistProgress();
+                            }
+                            return false;
+                          },
+                          child: ListView.builder(
+                            controller: _scroll,
+                            padding: EdgeInsets.fromLTRB(
+                                readerMarginValue(_prefs.margin),
+                                Space.m,
+                                readerMarginValue(_prefs.margin),
+                                Space.xxl + readerMarginValue(_prefs.margin)),
+                            // +1：章尾「下一章」接续卡
+                            itemCount: _paragraphs.length + 1,
+                            itemBuilder: (_, i) => i < _paragraphs.length
+                                ? _paragraphItem(_paragraphs[i], fg)
+                                : _nextChapterCard(fg),
+                          ),
                         ),
                       ),
                     ),
-                  Expanded(
-                    child: NotificationListener<ScrollEndNotification>(
-                      onNotification: (_) {
-                        _persistProgress();
-                        return false;
-                      },
-                      child: ListView.builder(
-                        controller: _scroll,
-                        padding: const EdgeInsets.fromLTRB(
-                            Space.xl, Space.m, Space.xl, Space.xxl + Space.xl),
-                        itemCount: _paragraphs.length,
-                        itemBuilder: (_, i) => _paragraphItem(_paragraphs[i], fg),
-                      ),
-                    ),
-                  ),
-                ]),
+                    _bottomBar(bg, fg),
+                  ]),
+      ),
     );
   }
 
-  Widget _buildChapterDrawer(Color fg, Color bg) {
-    return Drawer(
-      backgroundColor: bg,
-      child: SafeArea(
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(
-              horizontal: Space.s, vertical: Space.m),
-          itemCount: _chapters.length,
-          itemBuilder: (_, i) {
-            final ch = _chapters[i];
-            final selected = i == _chapterIdx;
-            final isLastRead = i == _lastReadingChapterIdx;
-            return ListTile(
-              selected: selected,
-              shape: RoundedRectangleBorder(borderRadius: AppRadius.rMd),
-              title: Text(
-                ch.title ?? '第${i + 1}部分',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: selected ? null : fg),
+  /// 顶栏（沉浸收起）：返回 + 章名 + 目录/人物/设置。自绘而非 AppBar，
+  /// 是为了沉浸切换时高度可动画（AnimatedContainer 0↔kToolbarHeight）。
+  Widget _topBar(Color bg, Color fg) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      height: _immersive ? 0 : kToolbarHeight,
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(color: bg),
+      child: Visibility(
+        // 沉浸时不构建内容（Visibility 不留 element，命中与 finder 都干净）
+        visible: !_immersive,
+        // OverflowBox 恒定内容高度：沉浸还原动画的过渡帧里容器被压缩，
+        // 无恒定约束的话内容会触发布局溢出（此处溢出本就该被 Clip 裁掉）
+        child: OverflowBox(
+          minHeight: kToolbarHeight,
+          maxHeight: kToolbarHeight,
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            height: kToolbarHeight,
+            child: SafeArea(
+              bottom: false,
+            child: Row(children: [
+              IconButton(
+                  icon:
+                      Icon(Icons.arrow_back, color: fg.withValues(alpha: .75)),
+                  tooltip: '返回',
+                  onPressed: () => Navigator.maybePop(context)),
+              Expanded(
+                child: Text(
+                  _chapters.isEmpty
+                      ? '阅读器'
+                      : (_chapters[_chapterIdx].title ??
+                          '第${_chapterIdx + 1}部分'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge!
+                      .copyWith(color: fg),
+                ),
               ),
-              trailing: isLastRead && !selected
-                  ? Text('上次读到',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: fg.withValues(alpha: 0.55)))
-                  : null,
-              onTap: () {
-                Navigator.pop(context); // 关抽屉
-                _openChapter(i);
-              },
-            );
-          },
+              IconButton(
+                  icon: Icon(Icons.menu, color: fg.withValues(alpha: .75)),
+                  tooltip: '目录',
+                  onPressed: _openDrawer),
+              IconButton(
+                  icon: Icon(Icons.groups, color: fg.withValues(alpha: .75)),
+                  tooltip: '本书人物',
+                  onPressed: _showCastSheet),
+              IconButton(
+                  icon:
+                      Icon(Icons.text_fields, color: fg.withValues(alpha: .75)),
+                  tooltip: '阅读设置',
+                  onPressed: _showPrefsSheet),
+              ]),
+            ),
+          ),
         ),
       ),
     );
   }
+
+  /// 底部信息条（沉浸收起）：本章细进度条 + 「本章 x% · 全书 x%」。
+  /// 全书%按全书段落序号折算（章起点 + 章内滚动插值），非按章数粗估。
+  Widget _bottomBar(Color bg, Color fg) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      height: _immersive ? 0 : 34,
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(color: bg),
+      child: Visibility(
+        visible: !_immersive,
+        child: OverflowBox(
+          minHeight: 34,
+          maxHeight: 34,
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            height: 34,
+            child: SafeArea(
+              top: false,
+              child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 硬约束高度：LinearProgressIndicator 在有界纵向约束下会扩展占满
+                ValueListenableBuilder<double>(
+                  valueListenable: _chapterPct,
+                  builder: (_, pct, _) => SizedBox(
+                    height: 2,
+                    child: LinearProgressIndicator(
+                      value: pct,
+                      minHeight: 2,
+                      color: fg.withValues(alpha: .45),
+                      backgroundColor: fg.withValues(alpha: .10),
+                    ),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: ValueListenableBuilder<double>(
+                  valueListenable: _bookPct,
+                  builder: (_, bPct, _) => Text(
+                    '本章 ${(_chapterPct.value * 100).round()}% · '
+                    '全书 ${(bPct * 100).round()}%',
+                    style: TextStyle(
+                        fontSize: 11, color: fg.withValues(alpha: .60)),
+                  ),
+                ),
+              ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 章尾接续卡：读完本章一键进下一章（无下一章给收尾文案）
+  Widget _nextChapterCard(Color fg) {
+    final hasNext = _chapterIdx + 1 < _chapters.length;
+    if (!hasNext) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: Space.xl),
+        child: Center(
+          child: Text('已是最后一章',
+              style:
+                  TextStyle(fontSize: 13, color: fg.withValues(alpha: .45))),
+        ),
+      );
+    }
+    final next = _chapters[_chapterIdx + 1];
+    final title = next.title ?? '第${_chapterIdx + 2}部分';
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.xl),
+      child: Center(
+        child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: fg,
+            side: BorderSide(color: fg.withValues(alpha: .35)),
+            padding: const EdgeInsets.symmetric(
+                horizontal: Space.xl, vertical: Space.m),
+          ),
+          onPressed: () => _openChapter(_chapterIdx + 1),
+          icon: const Icon(Icons.arrow_downward, size: 18),
+          label: Text('下一章 · $title',
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    );
+  }
+
+  void _openDrawer() {
+    _scaffoldKey.currentState?.openDrawer();
+    // 抽屉 build 后把当前章滚到可见（偏上 1/3 处，前后章名留上下文）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _drawerCurrentKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx, alignment: 0.3, duration: const Duration(milliseconds: 250));
+      }
+    });
+  }
+
+  /// 目录抽屉行模型：卷头（header 非空）或章条目（chapterIdx 非空）
+  Widget _buildChapterDrawer(Color fg, Color bg) {
+    final rows = <({String? header, int? chapterIdx})>[];
+    String? lastVolume;
+    var seenVolume = false;
+    for (var i = 0; i < _chapters.length; i++) {
+      final v = _chapters[i].volume;
+      if (v != lastVolume && v != null) {
+        rows.add((header: v, chapterIdx: null));
+      }
+      if (v != lastVolume) {
+        lastVolume = v;
+        seenVolume = v != null;
+      }
+      rows.add((header: null, chapterIdx: i));
+    }
+    final hasVolumes = seenVolume;
+    return Drawer(
+      backgroundColor: bg,
+      child: SafeArea(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.l, Space.l, Space.l, Space.s),
+            child: Text('目录',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge!
+                    .copyWith(color: fg)),
+          ),
+          if (_lastReadingChapterIdx >= 0 &&
+              _lastReadingChapterIdx != _chapterIdx)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.l, 0, Space.l, Space.s),
+              child: ActionChip(
+                avatar: Icon(Icons.history, size: 15, color: fg),
+                label: Text('上次读到 ${_chapterLabel(_lastReadingChapterIdx)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _openChapter(_lastReadingChapterIdx);
+                },
+              ),
+            ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: Space.s, vertical: Space.m),
+              itemCount: rows.length,
+              itemBuilder: (_, r) {
+                final row = rows[r];
+                if (row.header != null) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        Space.m, Space.m, Space.m, Space.xs),
+                    child: Text(row.header!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelLarge!
+                            .copyWith(color: fg.withValues(alpha: .65))),
+                  );
+                }
+                final i = row.chapterIdx!;
+                final selected = i == _chapterIdx;
+                final isLastRead = i == _lastReadingChapterIdx;
+                return ListTile(
+                  key: selected && hasVolumes ? _drawerCurrentKey : null,
+                  dense: hasVolumes,
+                  selected: selected,
+                  shape:
+                      RoundedRectangleBorder(borderRadius: AppRadius.rMd),
+                  title: Text(
+                    _chapterLabel(i),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: selected ? null : fg),
+                  ),
+                  trailing: isLastRead && !selected
+                      ? Text('上次读到',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: fg.withValues(alpha: 0.55)))
+                      : null,
+                  onTap: () {
+                    Navigator.pop(context); // 关抽屉
+                    _openChapter(i);
+                  },
+                );
+              },
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  String _chapterLabel(int i) =>
+      _chapters[i].title ?? '第${i + 1}部分';
 
   Widget _paragraphItem(Paragraph para, Color fg) {
     final anns = _anns[para.id] ?? const <Annotation>[];
@@ -534,20 +804,32 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               _sliderRow('字号', _prefs.fontSize, 14, 24, 10,
                   _prefs.fontSize.round().toString(), (v) {
                 setSheet(() {});
-                _updatePrefs(ReaderPrefs(
-                    fontSize: v,
-                    lineHeight: _prefs.lineHeight,
-                    theme: _prefs.theme));
+                _updatePrefs(_prefs.copyWith(fontSize: v));
               }),
               _sliderRow('行距', _prefs.lineHeight, 1.2, 2.2, 10,
                   _prefs.lineHeight.toStringAsFixed(1), (v) {
                 setSheet(() {});
-                _updatePrefs(ReaderPrefs(
-                    fontSize: _prefs.fontSize,
-                    lineHeight: v,
-                    theme: _prefs.theme));
+                _updatePrefs(_prefs.copyWith(lineHeight: v));
               }),
               const SizedBox(height: Space.s),
+              Text('页边距', style: Theme.of(ctx).textTheme.bodyMedium),
+              SegmentedButton<ReaderMargin>(
+                segments: const [
+                  ButtonSegment(
+                      value: ReaderMargin.compact, label: Text('紧凑')),
+                  ButtonSegment(
+                      value: ReaderMargin.standard, label: Text('标准')),
+                  ButtonSegment(
+                      value: ReaderMargin.wide, label: Text('宽松')),
+                ],
+                selected: {_prefs.margin},
+                onSelectionChanged: (s) {
+                  setSheet(() {});
+                  _updatePrefs(_prefs.copyWith(margin: s.first));
+                },
+              ),
+              const SizedBox(height: Space.m),
+              Text('背景', style: Theme.of(ctx).textTheme.bodyMedium),
               SegmentedButton<ReaderTheme>(
                 segments: const [
                   ButtonSegment(
@@ -560,10 +842,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                 selected: {_prefs.theme},
                 onSelectionChanged: (s) {
                   setSheet(() {});
-                  _updatePrefs(ReaderPrefs(
-                      fontSize: _prefs.fontSize,
-                      lineHeight: _prefs.lineHeight,
-                      theme: s.first));
+                  _updatePrefs(_prefs.copyWith(theme: s.first));
                 },
               ),
             ]),

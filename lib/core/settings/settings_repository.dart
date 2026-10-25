@@ -27,6 +27,7 @@ class SettingsRepository {
   static const _kReaderFontSize = 'reader.font_size';
   static const _kReaderLineHeight = 'reader.line_height';
   static const _kReaderTheme = 'reader.theme';
+  static const _kReaderMargin = 'reader.margin';
   // 小说两遍式管线参数（设计文档 §3）：批大小/首屏冲刺/地图领先/语义回忆开关
   static const _kNovelMapBatch = 'novel.mapBatchChapters';
   static const _kNovelDigestBatch = 'novel.digestBatchChapters';
@@ -73,6 +74,7 @@ class SettingsRepository {
 
   Future<ReaderPrefs> loadReaderPrefs() async {
     final themeName = await _get(_kReaderTheme);
+    final marginName = await _get(_kReaderMargin);
     return ReaderPrefs(
       fontSize:
           double.tryParse(await _get(_kReaderFontSize) ?? '') ?? 17,
@@ -80,6 +82,8 @@ class SettingsRepository {
           double.tryParse(await _get(_kReaderLineHeight) ?? '') ?? 1.7,
       theme: ReaderTheme.values.firstWhere((t) => t.name == themeName,
           orElse: () => ReaderTheme.paper),
+      margin: ReaderMargin.values.firstWhere((m) => m.name == marginName,
+          orElse: () => ReaderMargin.standard),
     );
   }
 
@@ -87,6 +91,7 @@ class SettingsRepository {
     await _set(_kReaderFontSize, p.fontSize.toString());
     await _set(_kReaderLineHeight, p.lineHeight.toString());
     await _set(_kReaderTheme, p.theme.name);
+    await _set(_kReaderMargin, p.margin.name);
   }
 
   Future<int> loadLlmBudgetTokens() async =>

@@ -3,10 +3,17 @@ import 'dart:convert';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 
 /// 阅读进度（小说项目）：章节下标 + 滚动偏移，恢复上次阅读位置。
+/// [progressPercent] 为全书进度 0~1（书架卡片「已读 x%」直接读它，免查章高）；
+/// 旧数据没有该键时为 null。
 class ReadingProgress {
-  ReadingProgress({required this.chapterIdx, required this.scrollOffset});
+  ReadingProgress({
+    required this.chapterIdx,
+    required this.scrollOffset,
+    this.progressPercent,
+  });
   final int chapterIdx;
   final double scrollOffset;
+  final double? progressPercent;
 }
 
 /// projects.meta_json 的结构化读写（S1 探测结果 + 各阶段中间产物）。
@@ -64,6 +71,8 @@ class ProjectMeta {
           'reading': {
             'chapterIdx': readingProgress!.chapterIdx,
             'scrollOffset': readingProgress!.scrollOffset,
+            if (readingProgress!.progressPercent != null)
+              'progressPercent': readingProgress!.progressPercent,
           },
       };
 
@@ -99,6 +108,9 @@ class ProjectMeta {
               scrollOffset: ((j['reading'] as Map)['scrollOffset'] as num?)
                       ?.toDouble() ??
                   0.0,
+              progressPercent:
+                  ((j['reading'] as Map)['progressPercent'] as num?)
+                      ?.toDouble(),
             ),
     );
     // 只在解析路径收杂键；对象字段值在 toJson 里后写覆盖，永不回退
