@@ -1,3 +1,7 @@
+// 批量导入用例含真实文件探针，CI 慢机上会超 dart test 默认 30s，整体放宽
+@Timeout(Duration(minutes: 3))
+library;
+
 import 'dart:io';
 
 import 'package:drift/native.dart';
