@@ -50,6 +50,16 @@ void main() {
   ]
 }''';
 
+    const androidFixture = '''
+{
+  "tag_name": "latest",
+  "body": "<!-- appupdate versionCode=42 versionName=0.1.42 -->\\n\\n- 修复 A",
+  "assets": [
+    {"name": "peixi-windows-x64.zip", "browser_download_url": "https://github.com/o/r/releases/download/latest/peixi-windows-x64.zip", "size": 999999},
+    {"name": "peixi-android-arm64.apk", "browser_download_url": "https://github.com/o/r/releases/download/latest/peixi-android-arm64.apk", "size": 654321}
+  ]
+}''';
+
     test('解析出版本与 zip 资产，说明里去掉元数据行', () {
       final r = parseLatestReleaseJson(fixture, assetExtension: '.zip');
       expect(r, isNotNull);
@@ -59,6 +69,16 @@ void main() {
       expect(r.size, 123456);
       expect(r.notes, isNot(contains('appupdate')));
       expect(r.notes, contains('新增 B'));
+    });
+
+    test('安卓按 .apk 挑资产：同 Release 里不串到 Windows zip', () {
+      final r = parseLatestReleaseJson(androidFixture, assetExtension: '.apk');
+      expect(r, isNotNull);
+      expect(r!.downloadUrl, endsWith('peixi-android-arm64.apk'));
+      expect(r.size, 654321);
+      // 反向：Windows 客户端仍然只认 zip
+      final w = parseLatestReleaseJson(androidFixture, assetExtension: '.zip');
+      expect(w!.downloadUrl, endsWith('peixi-windows-x64.zip'));
     });
 
     test('没有 zip 资产 → null', () {
@@ -128,6 +148,55 @@ void main() {
       expect(s, contains('robocopy "%NEW_DIR%" "%INSTALL_DIR%" /MIR'));
       expect(s, contains('start "" "%INSTALL_DIR%\\%EXE%"'));
       expect(s, contains('exit /b 0'));
+    });
+  });
+
+  group('平台资产与安卓安装分支', () {
+    test('assetExtensionFor：Android=.apk，桌面=.zip', () {
+      expect(UpdateService.assetExtensionFor(isAndroid: true), '.apk');
+      expect(UpdateService.assetExtensionFor(isAndroid: false), '.zip');
+    });
+
+    test('applyUpdate 安卓分支：把 APK 交给安装器，不解压不退出', () async {
+      final apk = File(
+          '${Directory.systemTemp.createTempSync('peixi_apk').path}/update-42.apk')
+        ..writeAsBytesSync(List.filled(64, 1));
+      addTearDown(() => apk.parent.deleteSync(recursive: true));
+
+      final received = <String>[];
+      final svc = UpdateService(assetExtension: '.apk')
+        ..androidInstaller = (f) async => received.add(f.path);
+      await svc.applyUpdate(
+          UpdateInfo(
+              versionCode: 42,
+              versionName: '0.1.42',
+              downloadUrl: 'u',
+              size: 0,
+              notes: ''),
+          zip: apk);
+      expect(received.single, apk.path, reason: '下载落盘的 APK 原样交给系统安装器');
+    });
+
+    test('applyUpdate 安卓未授权：hook 抛出的提示原样透传给弹窗展示', () async {
+      final apk = File(
+          '${Directory.systemTemp.createTempSync('peixi_apk').path}/update-42.apk')
+        ..writeAsBytesSync(List.filled(8, 1));
+      addTearDown(() => apk.parent.deleteSync(recursive: true));
+
+      final svc = UpdateService(assetExtension: '.apk')
+        ..androidInstaller = (f) async =>
+            throw UpdateException('需要先允许安装：请允许后回到应用，再点一次「安装」。');
+      await expectLater(
+          svc.applyUpdate(
+              UpdateInfo(
+                  versionCode: 42,
+                  versionName: '0.1.42',
+                  downloadUrl: 'u',
+                  size: 0,
+                  notes: ''),
+              zip: apk),
+          throwsA(isA<UpdateException>()
+              .having((e) => e.message, 'msg', contains('允许安装'))));
     });
   });
 

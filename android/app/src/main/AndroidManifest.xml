@@ -3,10 +3,23 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- 处理期间保持唤醒（wakelock_plus 运行时申请，显式声明兜底） -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- 应用内更新：下载 APK 后交给系统安装器（Android 8+ 运行时还需用户
+         在「安装未知应用」页面对本应用授权，由 MainActivity 引导跳转） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
         android:label="陪析"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- 应用内更新：把 cache 目录里的 APK 通过系统安装器打开 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
         <activity
             android:name=".MainActivity"
             android:exported="true"

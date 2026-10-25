@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -34,17 +35,18 @@ class UpdateInfo {
   final String notes;
 }
 
-/// 应用自更新服务（Windows 桌面端）：
+/// 应用自更新服务（Windows 桌面端 + Android 端）：
 /// 检查（GitHub Releases 匿名 API，24h 节流）→ 下载（.part 断点续传 +
-/// 国内镜像兜底）→ 应用（解压 + 批处理等退出后替换安装目录并重启）。
+/// 国内镜像兜底）→ 应用（Windows：解压+批处理替换重启；Android：系统安装器）。
 class UpdateService {
   UpdateService({
     Dio? dio,
     this.apiBase = 'https://api.github.com',
     this.repo = 'Lwb1397111398/peixi',
-    this.assetExtension = '.zip',
+    String? assetExtension,
     List<String>? mirrors,
-  })  : _dio = dio ?? Dio(),
+  })  : assetExtension = assetExtension ?? assetExtensionFor(isAndroid: Platform.isAndroid),
+        _dio = dio ?? Dio(),
         mirrors = mirrors ??
             const ['https://ghfast.top/', 'https://gh-proxy.com/'] {
     _dio.options
@@ -52,13 +54,19 @@ class UpdateService {
       ..receiveTimeout = const Duration(seconds: 30);
   }
 
+  /// 安装包资产扩展名按平台区分：Windows 发布 zip、Android 发布 apk。
+  /// 两个平台读同一个 Release 元数据（versionCode 一致），只挑各自的资产。
+  @visibleForTesting
+  static String assetExtensionFor({required bool isAndroid}) =>
+      isAndroid ? '.apk' : '.zip';
+
   final Dio _dio;
 
   /// Releases API 基址与仓库（测试注入本地假服务器用）。
   final String apiBase;
   final String repo;
 
-  /// 安装包资产扩展名（Windows 打包为 zip）。
+  /// 安装包资产扩展名（Windows 打包为 zip，Android 打包为 apk）。
   final String assetExtension;
 
   /// 下载兜底镜像前缀列表（按序尝试；只对 github.com 地址生效）。
@@ -231,14 +239,40 @@ class UpdateService {
     return Directory(p.join(tmp.path, 'peixi_update'));
   }
 
-  /// 应用更新（Windows）：解压到临时目录 → 生成替换批处理 → 分离进程执行。
-  /// 批处理等待本程序退出后 robocopy 覆盖安装目录并重启；调用方随后 exit(0)。
-  Future<void> applyUpdate(UpdateInfo info,
-      {required File zip, String? installDir}) async {
+  /// 安卓安装通道（可注入替身测试）。null = 用默认 MethodChannel 实现。
+  @visibleForTesting
+  Future<void> Function(File apk)? androidInstaller;
+
+  static const _channel = MethodChannel('peixi/app_update');
+
+  /// 默认安卓安装：MainActivity 里注册的同名通道接手。
+  /// 返回值 "opened" = 系统安装器已弹出；"need_permission" = 已跳转
+  /// 「安装未知应用」授权页，用户授权后需再点一次安装。
+  @visibleForTesting
+  Future<void> installApkViaChannel(File apk) async {
+    final result = await _channel.invokeMethod<String>(
+        'installApk', {'path': apk.path});
+    if (result == 'need_permission') {
+      throw UpdateException(
+          '需要先允许安装：已在系统设置里打开「安装未知应用」页面，'
+          '请允许后回到应用，再点一次「安装」。');
+    }
+  }
+
+  /// 应用更新：
+  /// - Android：把下载好的 APK 交给系统安装器（需用户授予"安装未知应用"，
+  ///   未授权时引导到设置页，回来再点一次安装）；安装器接管后本进程不退出。
+  /// - Windows：解压到临时目录 → 生成替换批处理 → 分离进程执行。
+  ///   批处理等待本程序退出后 robocopy 覆盖安装目录并重启；调用方随后 exit(0)。
+  Future<void> applyUpdate(UpdateInfo info, {required File zip}) async {
+    if (Platform.isAndroid || androidInstaller != null) {
+      await (androidInstaller ?? installApkViaChannel)(zip);
+      return;
+    }
     if (!Platform.isWindows) {
       throw UpdateException('当前平台暂不支持应用内更新，请手动安装新版本。');
     }
-    final dir = installDir ?? p.dirname(Platform.resolvedExecutable);
+    final dir = p.dirname(Platform.resolvedExecutable);
     final exeName = p.basename(Platform.resolvedExecutable);
     final work = await _updateWorkDir();
     await work.create(recursive: true);

@@ -42,6 +42,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
   double _progress = 0;
   File? _zip;
   String? _error;
+  bool get _isAndroid => Platform.isAndroid;
 
   UpdateService get _service => widget.ref.read(updateServiceProvider);
 
@@ -76,9 +77,19 @@ class _UpdateDialogState extends State<UpdateDialog> {
       _error = null;
     });
     try {
-      // 分离进程已接管：等待本程序退出 → 覆盖安装目录 → 重启
+      // Windows：分离进程已接管，等待本程序退出 → 覆盖安装目录 → 重启，
+      // 这里直接退出；Android：系统安装器接管，本进程不退出（用户取消
+      // 安装或安装完打开新版都是系统的事）。
       await _service.applyUpdate(widget.info, zip: _zip!);
-      exit(0);
+      if (_isAndroid) {
+        if (!mounted) return;
+        setState(() {
+          _phase = _UpdatePhase.readyToInstall;
+          _error = '已交给系统安装器，按提示完成安装即可';
+        });
+      } else {
+        exit(0);
+      }
     } on UpdateException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -156,7 +167,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
         if (_phase == _UpdatePhase.readyToInstall)
           FilledButton(
             onPressed: _install,
-            child: const Text('安装并重启'),
+            child: Text(_isAndroid ? '安装' : '安装并重启'),
           ),
       ],
     );
