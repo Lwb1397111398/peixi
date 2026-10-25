@@ -164,7 +164,7 @@ void main() {
     // 2) 重新打开 → onUpgrade(4→5) 自动执行（加列 + 建表 + 回填）
     db = AppDatabase(NativeDatabase(dbFile));
 
-    expect(db.schemaVersion, 5);
+    expect(db.schemaVersion, 6);
     final chapters = await (db.select(db.chapters)
           ..orderBy([(c) => OrderingTerm.asc(c.idx)]))
         .get();
@@ -276,7 +276,7 @@ void main() {
         ]));
     // user_version 已推进到 5
     final version = await db.customSelect('SELECT * FROM pragma_user_version').getSingle();
-    expect(version.read<int>('user_version'), 5);
+    expect(version.read<int>('user_version'), 6);
     // ⑤ meta 回填 chapterCount/annotatedChapters；digest/annotatedPara 原样保留
     final p = await db.select(db.projects).getSingle();
     final meta = jsonDecode(p.metaJson!) as Map<String, dynamic>;

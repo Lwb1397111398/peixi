@@ -77,7 +77,7 @@ void main() {
     // 2) 重新打开 → onUpgrade(2→3) 自动执行
     db = AppDatabase(NativeDatabase(dbFile));
 
-    expect(db.schemaVersion, 5); // 沿用最新 schema 版本（v3 步骤已包含在迁移链中）
+    expect(db.schemaVersion, 6); // 沿用最新 schema 版本（v3 步骤已包含在迁移链中）
     final rows = await db.select(db.knowledgeCards).get();
     expect(rows, hasLength(1));
     final card = rows.single;
@@ -125,7 +125,7 @@ void main() {
     // 2) 重新打开 → onUpgrade(3→4) 自动执行
     db = AppDatabase(NativeDatabase(dbFile));
 
-    expect(db.schemaVersion, 5); // 沿用最新 schema 版本（v4 步骤已包含在迁移链中）
+    expect(db.schemaVersion, 6); // 沿用最新 schema 版本（v4 步骤已包含在迁移链中）
     // 3) llm_channels 已由迁移创建，可正常写读
     await db.into(db.llmChannels).insert(
         LlmChannelsCompanion.insert(name: '中转站', baseUrl: 'https://x/v1'));

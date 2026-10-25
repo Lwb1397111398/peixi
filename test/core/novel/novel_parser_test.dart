@@ -125,6 +125,195 @@ void main() {
     });
   });
 
+  group('parseNovel 卷/章两级', () {
+    test('第X卷 归属卷，卷标题不占章', () {
+      const raw = '''
+第一卷 风起
+第一章 山门
+　　少年入门。
+
+第二章 试炼
+　　他踏上石阶。
+
+第二卷 云涌
+第三章 变故
+　　夜里起了风。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(3));
+      expect(doc.chapters.map((c) => c.title).toList(),
+          ['第一章 山门', '第二章 试炼', '第三章 变故']);
+      expect(doc.chapters[0].volume, '第一卷 风起');
+      expect(doc.chapters[1].volume, '第一卷 风起');
+      expect(doc.chapters[2].volume, '第二卷 云涌');
+      // 卷标题行不得混入任何章正文
+      expect(doc.chapters.map((c) => c.paragraphs.join()).join(),
+          isNot(contains('第一卷')));
+      expect(doc.chapters.map((c) => c.paragraphs.join()).join(),
+          isNot(contains('第二卷')));
+    });
+
+    test('卷标题下直接接正文：以卷标题为章名成章', () {
+      const raw = '''
+上卷
+　　混沌初开。
+
+第一章 天光
+　　故事开始。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(2));
+      expect(doc.chapters[0].title, '上卷');
+      expect(doc.chapters[0].volume, '上卷');
+      expect(doc.chapters[0].paragraphs, ['混沌初开。']);
+      expect(doc.chapters[1].title, '第一章 天光');
+      expect(doc.chapters[1].volume, '上卷');
+    });
+
+    test('第X部/第X册 同样按卷归属', () {
+      const raw = '''
+第一部 少年
+第一章 启程
+　　出发。
+
+第二部 江湖
+第二章 风波
+　　客栈人声鼎沸。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(2));
+      expect(doc.chapters[0].volume, '第一部 少年');
+      expect(doc.chapters[1].volume, '第二部 江湖');
+    });
+
+    test('叙事句以「第X卷」开头但不切（后接非空白标点）', () {
+      const raw = '''
+第一章 起
+　　第二卷的故事还在继续，但他没有翻开。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(1));
+      expect(doc.chapters[0].paragraphs.first, startsWith('第二卷的故事'));
+    });
+
+    test('第X话/第X話 也按章切（日系轻小说）', () {
+      const raw = '''
+第1话 转生
+　　他睁开了眼。
+
+第2話 修行
+　　剑道场的清晨。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(2));
+      expect(doc.chapters[0].title, '第1话 转生');
+      expect(doc.chapters[1].title, '第2話 修行');
+    });
+  });
+
+  group('parseNovel 英文原版书', () {
+    test('Chapter 数字/罗马/英文数词 + 副题', () {
+      const raw = '''
+Chapter 1
+The boy woke up.
+
+Chapter II: The Journey
+They left the village.
+
+Chapter Five - Awakening
+Power stirred within him.
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(3));
+      expect(doc.chapters.map((c) => c.title).toList(),
+          ['Chapter 1', 'Chapter II: The Journey', 'Chapter Five - Awakening']);
+      expect(doc.chapters[0].paragraphs, ['The boy woke up.']);
+    });
+
+    test('全大写 CHAPTER 5 与 Prologue/Epilogue', () {
+      const raw = '''
+PROLOGUE
+The storm was coming.
+
+CHAPTER 5
+Everything changed.
+
+Epilogue: Years Later
+Peace at last.
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters.map((c) => c.title).toList(),
+          ['PROLOGUE', 'CHAPTER 5', 'Epilogue: Years Later']);
+    });
+
+    test('Part/Book 作为卷归属', () {
+      const raw = '''
+Part I
+Chapter 1
+Morning.
+
+Chapter 2
+Evening.
+
+Book Two
+Chapter 3
+Night.
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(3));
+      expect(doc.chapters[0].volume, 'Part I');
+      expect(doc.chapters[1].volume, 'Part I');
+      expect(doc.chapters[2].volume, 'Book Two');
+      expect(doc.chapters.map((c) => c.title).toList(),
+          ['Chapter 1', 'Chapter 2', 'Chapter 3']);
+    });
+
+    test('英文叙事句不误切', () {
+      const raw = '''
+Chapter 1 Beginnings
+　　Part of him wanted to stay, but the chapter was closed forever and ever.
+　　The prologue was over; what came next nobody could tell for certain.
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(1));
+      expect(doc.chapters[0].title, 'Chapter 1 Beginnings');
+      expect(doc.chapters[0].paragraphs, hasLength(2));
+    });
+  });
+
+  group('parseNovel 数字裸标题兜底', () {
+    test('全书无卷/章锚点时「1.」「一、」切章', () {
+      const raw = '''
+1. 初见
+　　巷口的猫。
+
+2. 重逢
+　　还是那只猫。
+
+一、尾声
+　　猫走了。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters.map((c) => c.title).toList(),
+          ['1. 初见', '2. 重逢', '一、尾声']);
+      expect(doc.chapters[0].paragraphs, ['巷口的猫。']);
+    });
+
+    test('已有 第X章 锚点时数字裸标题不启用（正文列表项安全）', () {
+      const raw = '''
+第一章 清晨
+　　他列了清单：
+1. 买米
+2. 打水
+　　然后出门。
+''';
+      final doc = parseNovel(raw);
+      expect(doc.chapters, hasLength(1));
+      expect(doc.chapters[0].paragraphs, hasLength(4));
+      expect(doc.chapters[0].paragraphs[1], '1. 买米');
+    });
+  });
+
   group('parseNovel 无标题兜底', () {
     test('长文按约 2000 字段落边界分块', () {
       final para = '他沿着长街一直走，灯火渐次熄灭，唯有更楼的梆子声远远传来。' * 20; // ~540字

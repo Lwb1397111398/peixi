@@ -2,11 +2,21 @@ import 'dart:convert';
 
 import 'package:peixi/core/novel/gbk_table.dart';
 
-/// N1 小说解析：编码检测 + 段落切分 + 章节切分。
+/// N1 小说解析：编码检测 + 段落切分 + 章节切分（卷/章两级）。
 class NovelChapter {
-  const NovelChapter({required this.idx, this.title, required this.paragraphs});
+  const NovelChapter({
+    required this.idx,
+    this.title,
+    this.volume,
+    required this.paragraphs,
+  });
   final int idx;
+
+  /// 章标题（兜底分块时为 null）。
   final String? title;
+
+  /// 所属卷标题（「第一卷 风起」「Part II」等；无卷结构为 null）。
+  final String? volume;
   final List<String> paragraphs;
 }
 
@@ -64,15 +74,80 @@ String gbkDecodeBytes(List<int> bytes) {
   return sb.toString();
 }
 
-// 章标题：第X章/回/卷/节，或 楔子/序章/引子/尾声/终章/番外 等惯用标题。
+// ---------- 行分类正则（均 ^ 锚定 + 限长防误切叙事句） ----------
+
+// 卷标题：第X卷/部/册、上/中/下卷册部；副题需以空白或标点开头（「第二卷的故事」不匹配）。
+final _volumeHeadingRe = RegExp(
+    r'^(第[〇零一二三四五六七八九十百千两0-9]{1,7}[卷部册]|[上中下][卷册部])'
+    r'([\s：:．.·—-].*)?$');
+
+// 英文数词（卷/章号用，one~twenty + first~twelfth 覆盖绝大多数原版书）。
+const _enNumberWords = 'One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|'
+    'Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|'
+    'Nineteen|Twenty|'
+    'First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|'
+    'Eleventh|Twelfth';
+
+// 英文标题行结构探测：Part/Book/Chapter + 号（数字/罗马/英文数词），或
+// Prologue/Epilogue 等惯用词。caseInsensitive 兼容 CHAPTER/chapter。
+// 注意：raw 字符串里 $ 插值不生效，数词表须用普通字符串插值单独拼接。
+final _enHeadingProbeRe = RegExp(
+    r'^(Part|Book|Chapter)\s+'
+    r'([0-9]{1,4}|[IVXLCDMivxlcdm]{1,7}|'
+    '$_enNumberWords'
+    r')(.*)$'
+    r'|^(Prologue|Epilogue|Preface|Foreword|Afterword|Introduction)(.*)$',
+    caseSensitive: false);
+
+// 副题合法形态：空、标点开头（「Chapter 5: The End」）、或空格+大写字母/
+// 数字/连字符开头（「Chapter 1 The Boy」/「Chapter Five - Dawn」，标题词
+// 首字母大写）。空格+小写开头是叙事句（「Part Two of the trilogy was
+// better」），不认——大小写检查须敏感，故与 probe 分开。
+final _enHeadingSuffixPunct = RegExp(r'^[：:．.·—\-－]');
+final _enHeadingSuffixTitle = RegExp(r'^ [A-Z0-9\-—]');
+
+/// 英文标题行分类：Part/Book → 卷；Chapter/Prologue 等 → 章；非标题 → null。
+_LineKind? _enHeadingKind(String t) {
+  final m = _enHeadingProbeRe.firstMatch(t);
+  if (m == null) return null;
+  final suffix = m.group(3) ?? m.group(5)!;
+  final suffixOk = suffix.isEmpty ||
+      _enHeadingSuffixPunct.hasMatch(suffix) ||
+      _enHeadingSuffixTitle.hasMatch(suffix);
+  if (!suffixOk) return null;
+  final head = m.group(1);
+  if (head == null) return _LineKind.chapter; // Prologue/Epilogue 等
+  final h = head.toLowerCase();
+  return (h == 'part' || h == 'book') ? _LineKind.volume : _LineKind.chapter;
+}
+
+// 中文章标题：第X章/回/节/话（含日文「話」），或 楔子/序章/引子/尾声/终章/
+// 番外/正文/序言/前言/后记/完结 等惯用单行标题。
 final _chapterHeadingRe = RegExp(
-    r'^(第[〇零一二三四五六七八九十百千两0-9]{1,7}[章回卷节]|楔子|序章|引子|尾声|终章|番外)([\s：:．.·—-].*)?$');
+    r'^(第[〇零一二三四五六七八九十百千两0-9]{1,7}[章回节话話]'
+    r'|楔子|序章|引子|尾声|终章|番外|正文|序言|前言|后记|完结)'
+    r'([\s：:．.·—-].*)?$');
+
+// 数字裸标题（「1.」「一、」「01.」）：误切风险高（正文列表项同形），
+// 仅当全书找不到任何卷/章锚点时才作为兜底切分。
+final _bareNumberHeadingRe =
+    RegExp(r'^([0-9]{1,4}|[〇零一二三四五六七八九十百]{1,4})[.、．].{0,38}$');
 
 /// 章标题行不应是正文段落，限长防止误伤叙事句。
 const _maxHeadingLength = 40;
 
 /// 无章标题时的兜底分块目标大小。
 const _fallbackChunkChars = 2000;
+
+enum _LineKind { plain, volume, chapter }
+
+/// 卷/章标题行统一在这里分类（卷优先于章：「第一卷」只当卷，不当章切）。
+_LineKind _classifyHeadingLine(String t) {
+  if (t.length > _maxHeadingLength) return _LineKind.plain;
+  if (_volumeHeadingRe.hasMatch(t)) return _LineKind.volume;
+  if (_chapterHeadingRe.hasMatch(t)) return _LineKind.chapter;
+  return _enHeadingKind(t) ?? _LineKind.plain;
+}
 
 NovelDoc parseNovel(String raw) {
   final text = raw
@@ -82,44 +157,71 @@ NovelDoc parseNovel(String raw) {
   final lines = text.split('\n');
 
   final paragraphs = <String>[];
-  final isHeading = <bool>[];
+  final kinds = <_LineKind>[];
   for (final line in lines) {
     final t = line.trim().replaceAll('\u3000', ' ').trim();
     if (t.isEmpty) continue;
     paragraphs.add(t);
-    isHeading.add(_chapterHeadingRe.hasMatch(t) && t.length <= _maxHeadingLength);
+    kinds.add(_classifyHeadingLine(t));
   }
 
-  final headingIdx = <int>[
-    for (var i = 0; i < paragraphs.length; i++)
-      if (isHeading[i]) i
-  ];
+  final hasAnchor =
+      kinds.contains(_LineKind.volume) || kinds.contains(_LineKind.chapter);
+  if (!hasAnchor) {
+    // 全书无卷/章锚点：数字裸标题降级为章锚点，避免整本走 2000 字盲切
+    for (var i = 0; i < paragraphs.length; i++) {
+      if (_bareNumberHeadingRe.hasMatch(paragraphs[i])) {
+        kinds[i] = _LineKind.chapter;
+      }
+    }
+  }
 
-  // 锚定正则 + 标题限长已足够防误切，单个标题也按章切（保留标题信息）
-  if (headingIdx.isNotEmpty) {
-    return NovelDoc(chapters: _splitByHeadings(paragraphs, headingIdx));
+  if (kinds.contains(_LineKind.volume) ||
+      kinds.contains(_LineKind.chapter)) {
+    return NovelDoc(chapters: _splitByHeadings(paragraphs, kinds));
   }
   return NovelDoc(chapters: _chunkBySize(paragraphs));
 }
 
+/// 按卷/章锚点切分：卷标题行只更新归属卷（不占章）；卷标题下直接接正文时，
+/// 以卷标题为章名生成一章。章标题下无正文也保留空章（保留标题信息）。
 List<NovelChapter> _splitByHeadings(
-    List<String> paragraphs, List<int> headingIdx) {
+    List<String> paragraphs, List<_LineKind> kinds) {
   final chapters = <NovelChapter>[];
-  // 首个章标题之前的引言单独成章（可能为空则跳过）
-  final first = headingIdx.first;
-  if (first > 0) {
-    chapters.add(NovelChapter(
-        idx: 0, title: null, paragraphs: paragraphs.sublist(0, first)));
-  }
-  for (var h = 0; h < headingIdx.length; h++) {
-    final start = headingIdx[h];
-    final end = h + 1 < headingIdx.length ? headingIdx[h + 1] : paragraphs.length;
-    final body = paragraphs.sublist(start + 1, end);
+  String? currentVolume;
+  var buf = <String>[];
+  String? pendingTitle;
+  var pendingIsVolume = false;
+
+  void flush() {
+    if (pendingTitle == null && buf.isEmpty) return;
+    if (pendingIsVolume && buf.isEmpty) return; // 纯卷头不生成章
     chapters.add(NovelChapter(
         idx: chapters.length,
-        title: paragraphs[start],
-        paragraphs: body));
+        title: pendingTitle,
+        volume: currentVolume,
+        paragraphs: buf));
+    buf = <String>[];
+    pendingTitle = null;
+    pendingIsVolume = false;
   }
+
+  for (var i = 0; i < paragraphs.length; i++) {
+    switch (kinds[i]) {
+      case _LineKind.volume:
+        flush();
+        currentVolume = paragraphs[i];
+        pendingTitle = paragraphs[i];
+        pendingIsVolume = true;
+      case _LineKind.chapter:
+        flush();
+        pendingTitle = paragraphs[i];
+        pendingIsVolume = false;
+      case _LineKind.plain:
+        buf.add(paragraphs[i]);
+    }
+  }
+  flush();
   return chapters;
 }
 
@@ -145,6 +247,7 @@ List<NovelChapter> _chunkBySize(List<String> paragraphs) {
       chapters[chapters.length - 1] = NovelChapter(
           idx: last.idx,
           title: last.title,
+          volume: last.volume,
           paragraphs: [...last.paragraphs, ...buf]);
     } else {
       chapters.add(NovelChapter(

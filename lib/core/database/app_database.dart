@@ -135,6 +135,10 @@ class Chapters extends Table {
   BoolColumn get annotDone => boolean().withDefault(const Constant(false))();
   TextColumn get castIds => text().withDefault(const Constant('[]'))(); // JSON List<int>
   TextColumn get digestBefore => text().nullable()(); // 该章开读时的"故事至今"快照
+
+  /// v6：所属卷标题（「第一卷 风起」「Part II」；无卷结构为 null），
+  /// 阅读器目录按卷分组用。
+  TextColumn get volume => text().nullable()();
 }
 
 @TableIndex(name: 'idx_paragraphs_project', columns: {#projectId})
@@ -245,7 +249,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -280,6 +284,10 @@ class AppDatabase extends _$AppDatabase {
               await m.createTable(chapterEmbeddings);
               await backfillNovelV5(this);
             });
+          }
+          if (from < 6) {
+            // v5→v6：分章识别升级——章归属卷（chapters.volume，阅读器目录分组用）
+            await m.addColumn(chapters, chapters.volume);
           }
           if (from < 2) {
             // v1→v2：为按项目/章节/段落/场景等外键式查询补齐索引（v1 为全表扫描）。

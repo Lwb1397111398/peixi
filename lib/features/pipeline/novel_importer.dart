@@ -112,6 +112,7 @@ class NovelImporter {
                   projectId: projectId,
                   idx: ch.idx,
                   title: Value(ch.title),
+                  volume: Value(ch.volume),
                   startPara: startPara,
                   endPara: ch.paragraphs.isEmpty
                       ? startPara

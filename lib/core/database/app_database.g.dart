@@ -4069,6 +4069,15 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _volumeMeta = const VerificationMeta('volume');
+  @override
+  late final GeneratedColumn<String> volume = GeneratedColumn<String>(
+    'volume',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -4082,6 +4091,7 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
     annotDone,
     castIds,
     digestBefore,
+    volume,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -4169,6 +4179,12 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
         ),
       );
     }
+    if (data.containsKey('volume')) {
+      context.handle(
+        _volumeMeta,
+        volume.isAcceptableOrUnknown(data['volume']!, _volumeMeta),
+      );
+    }
     return context;
   }
 
@@ -4222,6 +4238,10 @@ class $ChaptersTable extends Chapters with TableInfo<$ChaptersTable, Chapter> {
         DriftSqlType.string,
         data['${effectivePrefix}digest_before'],
       ),
+      volume: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}volume'],
+      ),
     );
   }
 
@@ -4243,6 +4263,10 @@ class Chapter extends DataClass implements Insertable<Chapter> {
   final bool annotDone;
   final String castIds;
   final String? digestBefore;
+
+  /// v6：所属卷标题（「第一卷 风起」「Part II」；无卷结构为 null），
+  /// 阅读器目录按卷分组用。
+  final String? volume;
   const Chapter({
     required this.id,
     required this.projectId,
@@ -4255,6 +4279,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     required this.annotDone,
     required this.castIds,
     this.digestBefore,
+    this.volume,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -4275,6 +4300,9 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     map['cast_ids'] = Variable<String>(castIds);
     if (!nullToAbsent || digestBefore != null) {
       map['digest_before'] = Variable<String>(digestBefore);
+    }
+    if (!nullToAbsent || volume != null) {
+      map['volume'] = Variable<String>(volume);
     }
     return map;
   }
@@ -4298,6 +4326,9 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       digestBefore: digestBefore == null && nullToAbsent
           ? const Value.absent()
           : Value(digestBefore),
+      volume: volume == null && nullToAbsent
+          ? const Value.absent()
+          : Value(volume),
     );
   }
 
@@ -4318,6 +4349,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       annotDone: serializer.fromJson<bool>(json['annotDone']),
       castIds: serializer.fromJson<String>(json['castIds']),
       digestBefore: serializer.fromJson<String?>(json['digestBefore']),
+      volume: serializer.fromJson<String?>(json['volume']),
     );
   }
   @override
@@ -4335,6 +4367,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       'annotDone': serializer.toJson<bool>(annotDone),
       'castIds': serializer.toJson<String>(castIds),
       'digestBefore': serializer.toJson<String?>(digestBefore),
+      'volume': serializer.toJson<String?>(volume),
     };
   }
 
@@ -4350,6 +4383,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     bool? annotDone,
     String? castIds,
     Value<String?> digestBefore = const Value.absent(),
+    Value<String?> volume = const Value.absent(),
   }) => Chapter(
     id: id ?? this.id,
     projectId: projectId ?? this.projectId,
@@ -4362,6 +4396,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     annotDone: annotDone ?? this.annotDone,
     castIds: castIds ?? this.castIds,
     digestBefore: digestBefore.present ? digestBefore.value : this.digestBefore,
+    volume: volume.present ? volume.value : this.volume,
   );
   Chapter copyWithCompanion(ChaptersCompanion data) {
     return Chapter(
@@ -4378,6 +4413,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
       digestBefore: data.digestBefore.present
           ? data.digestBefore.value
           : this.digestBefore,
+      volume: data.volume.present ? data.volume.value : this.volume,
     );
   }
 
@@ -4394,7 +4430,8 @@ class Chapter extends DataClass implements Insertable<Chapter> {
           ..write('mapDone: $mapDone, ')
           ..write('annotDone: $annotDone, ')
           ..write('castIds: $castIds, ')
-          ..write('digestBefore: $digestBefore')
+          ..write('digestBefore: $digestBefore, ')
+          ..write('volume: $volume')
           ..write(')'))
         .toString();
   }
@@ -4412,6 +4449,7 @@ class Chapter extends DataClass implements Insertable<Chapter> {
     annotDone,
     castIds,
     digestBefore,
+    volume,
   );
   @override
   bool operator ==(Object other) =>
@@ -4427,7 +4465,8 @@ class Chapter extends DataClass implements Insertable<Chapter> {
           other.mapDone == this.mapDone &&
           other.annotDone == this.annotDone &&
           other.castIds == this.castIds &&
-          other.digestBefore == this.digestBefore);
+          other.digestBefore == this.digestBefore &&
+          other.volume == this.volume);
 }
 
 class ChaptersCompanion extends UpdateCompanion<Chapter> {
@@ -4442,6 +4481,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
   final Value<bool> annotDone;
   final Value<String> castIds;
   final Value<String?> digestBefore;
+  final Value<String?> volume;
   const ChaptersCompanion({
     this.id = const Value.absent(),
     this.projectId = const Value.absent(),
@@ -4454,6 +4494,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     this.annotDone = const Value.absent(),
     this.castIds = const Value.absent(),
     this.digestBefore = const Value.absent(),
+    this.volume = const Value.absent(),
   });
   ChaptersCompanion.insert({
     this.id = const Value.absent(),
@@ -4467,6 +4508,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     this.annotDone = const Value.absent(),
     this.castIds = const Value.absent(),
     this.digestBefore = const Value.absent(),
+    this.volume = const Value.absent(),
   }) : projectId = Value(projectId),
        idx = Value(idx),
        startPara = Value(startPara),
@@ -4483,6 +4525,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     Expression<bool>? annotDone,
     Expression<String>? castIds,
     Expression<String>? digestBefore,
+    Expression<String>? volume,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -4496,6 +4539,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
       if (annotDone != null) 'annot_done': annotDone,
       if (castIds != null) 'cast_ids': castIds,
       if (digestBefore != null) 'digest_before': digestBefore,
+      if (volume != null) 'volume': volume,
     });
   }
 
@@ -4511,6 +4555,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     Value<bool>? annotDone,
     Value<String>? castIds,
     Value<String?>? digestBefore,
+    Value<String?>? volume,
   }) {
     return ChaptersCompanion(
       id: id ?? this.id,
@@ -4524,6 +4569,7 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
       annotDone: annotDone ?? this.annotDone,
       castIds: castIds ?? this.castIds,
       digestBefore: digestBefore ?? this.digestBefore,
+      volume: volume ?? this.volume,
     );
   }
 
@@ -4563,6 +4609,9 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
     if (digestBefore.present) {
       map['digest_before'] = Variable<String>(digestBefore.value);
     }
+    if (volume.present) {
+      map['volume'] = Variable<String>(volume.value);
+    }
     return map;
   }
 
@@ -4579,7 +4628,8 @@ class ChaptersCompanion extends UpdateCompanion<Chapter> {
           ..write('mapDone: $mapDone, ')
           ..write('annotDone: $annotDone, ')
           ..write('castIds: $castIds, ')
-          ..write('digestBefore: $digestBefore')
+          ..write('digestBefore: $digestBefore, ')
+          ..write('volume: $volume')
           ..write(')'))
         .toString();
   }
@@ -11440,6 +11490,7 @@ typedef $$ChaptersTableCreateCompanionBuilder = ChaptersCompanion Function({
   Value<bool> annotDone,
   Value<String> castIds,
   Value<String?> digestBefore,
+  Value<String?> volume,
 });
 typedef $$ChaptersTableUpdateCompanionBuilder = ChaptersCompanion Function({
   Value<int> id,
@@ -11453,6 +11504,7 @@ typedef $$ChaptersTableUpdateCompanionBuilder = ChaptersCompanion Function({
   Value<bool> annotDone,
   Value<String> castIds,
   Value<String?> digestBefore,
+  Value<String?> volume,
 });
 
 final class $$ChaptersTableReferences
@@ -11554,6 +11606,11 @@ class $$ChaptersTableFilterComposer
 
   ColumnFilters<String> get digestBefore => $composableBuilder(
     column: $table.digestBefore,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get volume => $composableBuilder(
+    column: $table.volume,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -11665,6 +11722,11 @@ class $$ChaptersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get volume => $composableBuilder(
+    column: $table.volume,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$ProjectsTableOrderingComposer get projectId {
     final $$ProjectsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -11729,6 +11791,9 @@ class $$ChaptersTableAnnotationComposer
     column: $table.digestBefore,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get volume =>
+      $composableBuilder(column: $table.volume, builder: (column) => column);
 
   $$ProjectsTableAnnotationComposer get projectId {
     final $$ProjectsTableAnnotationComposer composer = $composerBuilder(
@@ -11819,6 +11884,7 @@ class $$ChaptersTableTableManager
                 Value<bool> annotDone = const Value.absent(),
                 Value<String> castIds = const Value.absent(),
                 Value<String?> digestBefore = const Value.absent(),
+                Value<String?> volume = const Value.absent(),
               }) => ChaptersCompanion(
                 id: id,
                 projectId: projectId,
@@ -11831,6 +11897,7 @@ class $$ChaptersTableTableManager
                 annotDone: annotDone,
                 castIds: castIds,
                 digestBefore: digestBefore,
+                volume: volume,
               ),
           createCompanionCallback:
               ({
@@ -11845,6 +11912,7 @@ class $$ChaptersTableTableManager
                 Value<bool> annotDone = const Value.absent(),
                 Value<String> castIds = const Value.absent(),
                 Value<String?> digestBefore = const Value.absent(),
+                Value<String?> volume = const Value.absent(),
               }) => ChaptersCompanion.insert(
                 id: id,
                 projectId: projectId,
@@ -11857,6 +11925,7 @@ class $$ChaptersTableTableManager
                 annotDone: annotDone,
                 castIds: castIds,
                 digestBefore: digestBefore,
+                volume: volume,
               ),
           withReferenceMapper: (p0) => p0
               .map(
