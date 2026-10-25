@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/asr_types.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 

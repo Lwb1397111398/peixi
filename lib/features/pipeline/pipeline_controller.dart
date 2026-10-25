@@ -5,8 +5,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:peixi/core/asr/asr_client.dart';
 import 'package:peixi/core/asr/asr_model_controller.dart';
+import 'package:peixi/core/asr/asr_types.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:drift/drift.dart' show Expression, Value;
 import 'package:peixi/core/database/app_database.dart';
@@ -16,7 +16,6 @@ import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/core/media/filename_parser.dart';
 import 'package:peixi/core/novel/epub_parser.dart';
 import 'package:peixi/core/novel/novel_parser.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/providers.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
@@ -88,7 +87,6 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     final e = PipelineEngine(
       db: ref.read(databaseProvider),
       ffmpeg: ref.read(ffmpegServiceProvider),
-      asr: AsrClient(ref.read(dioProvider)),
       settings: ref.read(settingsRepoProvider),
       audioDir: await audioDir(),
       localAsr: (audioPath) async {
@@ -115,9 +113,7 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
       commentary: (id) => CommentaryGenerator(
         db: db,
         llm: llm,
-        modelStandard: () =>
-            llm.modelOf(LlmSlot.analysis) ??
-            RoutingTable.fallbackModelFor(LlmSlot.analysis),
+        modelStandard: () => llm.modelOf(LlmSlot.analysis) ?? '',
         isCancelled: () => e.isCancelled(id),
         onProgress: (done, total) => _onEvent(PipelineEvent(
             projectId: id,
@@ -348,9 +344,9 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     WakelockPlus.toggle(enable: anyBusy);
   }
 
-  /// 导入前的配置校验：避免选完文件、抽完音频才在 upload/asr 阶段失败。
+  /// 导入前的配置校验：避免选完文件、跑完管线才在各阶段失败。
   /// 返回 null 表示通过。
-  Future<String?> _precheck({bool needOss = false}) async {
+  Future<String?> _precheck() async {
     final repo = ref.read(settingsRepoProvider);
     final routing = await repo.loadRouting();
     if (routing.channels.isEmpty) {
@@ -358,12 +354,6 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
     }
     if (!routing.channels.any((c) => c.usable)) {
       return '渠道未填写完整（缺少 BASE_URL 或 KEY），请到设置页「模型渠道」检查补全';
-    }
-    if (needOss && await repo.loadAsrMode() == AsrMode.cloud) {
-      final oss = await repo.loadOssConfig();
-      if (oss == null || !oss.isComplete) {
-        return '云端识别需先在设置页配置 OSS 中转桶，或切换为本地识别模式';
-      }
     }
     return null;
   }
@@ -379,7 +369,7 @@ class PipelineController extends Notifier<Map<int, PipelineState>> {
           return [for (final f in picked) if (f.path != null) f.path!];
         });
     if (selected == null || selected.isEmpty) return ImportBatchResult();
-    final cfgErr = await _precheck(needOss: true);
+    final cfgErr = await _precheck();
     if (cfgErr != null) return ImportBatchResult(configError: cfgErr);
 
     final out = ImportBatchResult();

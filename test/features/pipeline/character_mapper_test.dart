@@ -15,7 +15,9 @@ import 'package:peixi/features/pipeline/project_meta.dart';
 /// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
 const _route = ChannelRoute(
     id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
-const _testRouting = RoutingTable(channels: [_route], slots: {});
+const _testRouting = RoutingTable(channels: [_route], slots: {
+  LlmSlot.summary: SlotBinding(channelId: 0, model: 'test-model'),
+});
 
 class FakeAdapter implements HttpClientAdapter {
   FakeAdapter(this.body);

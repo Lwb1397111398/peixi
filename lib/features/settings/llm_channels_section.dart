@@ -25,10 +25,10 @@ class _LlmChannelsSectionState extends ConsumerState<LlmChannelsSection> {
   bool _loaded = false;
 
   static const _slotLabels = {
-    LlmSlot.summary: '轻量整理（地图/摘要/知识卡）',
-    LlmSlot.analysis: '深层分析（批注/解说）',
-    LlmSlot.vision: '视觉理解（关键帧）',
-    LlmSlot.embedding: '语义向量（可选，前文回忆）',
+    LlmSlot.summary: '轻量模型（地图/摘要/知识卡）',
+    LlmSlot.analysis: '主力模型（批注/解说）',
+    LlmSlot.vision: '视觉模型（关键帧理解）',
+    LlmSlot.embedding: '向量模型（前文回忆，可选）',
   };
 
   @override
@@ -150,7 +150,10 @@ class _LlmChannelsSectionState extends ConsumerState<LlmChannelsSection> {
           if (_channels.isEmpty)
             Padding(
                 padding: const EdgeInsets.symmetric(vertical: Space.m),
-                child: Text('尚未添加渠道。填写中转站的 BASE_URL 与 KEY，即可拉取模型列表。',
+                child: Text(
+                    '尚未添加渠道。填写任意 OpenAI 兼容接口（中转站/官方 API 均可）的'
+                    ' BASE_URL 与 KEY，即可拉取模型列表。可添加多条渠道，'
+                    '下方按角色分别绑定。',
                     style: tt.bodySmall)),
           for (final c in _channels)
             ListTile(
@@ -189,6 +192,17 @@ class _LlmChannelsSectionState extends ConsumerState<LlmChannelsSection> {
       SectionCard(
         title: '功能槽位',
         child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: Space.s),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '每个角色单独绑定一条渠道里的一个模型，同一渠道可绑多个角色。'
+                '轻量模型未绑定时相关调用自动落到主力模型；'
+                '其余角色未绑定则对应功能不运行（没有隐藏的默认模型）。',
+                style: tt.bodySmall),
+            ),
+          ),
           for (final s in LlmSlot.values)
             _SlotRow(
               slotName: s.name,

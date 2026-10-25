@@ -37,18 +37,19 @@ class StubAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-// 单可用渠道路由表：summary/analysis/vision 未显式绑定时按默认模型回落
-// （与旧 updateConfig(ApiConfig(...)) 的默认模型一致）。
+// 单渠道路由表：analysis 槽位显式绑定（新路由无默认回落）。
 const _testRouting = RoutingTable(
   channels: [
     ChannelRoute(
         id: 0,
-        name: 'legacy',
+        name: 'test',
         baseUrl: 'https://llm.example/v1',
         apiKey: 'sk-test',
         enabled: true),
   ],
-  slots: {},
+  slots: {
+    LlmSlot.analysis: SlotBinding(channelId: 0, model: 'test-model'),
+  },
 );
 
 LlmService makeSvc(AppDatabase db, HttpClientAdapter adapter) =>

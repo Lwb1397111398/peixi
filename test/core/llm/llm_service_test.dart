@@ -47,8 +47,7 @@ void main() {
   setUp(() => db = AppDatabase(NativeDatabase.memory()));
   tearDown(() async => db.close());
 
-  // 等价于旧 updateConfig(ApiConfig(baseUrl, apiKey, cheap, standard))：
-  // 单渠道 + summary/analysis 显式绑定（vision 走默认回落）。
+  // 单渠道 + summary/analysis 显式绑定（新路由无默认回落）。
   RoutingTable cfg() => const RoutingTable(
         channels: [
           ChannelRoute(
@@ -283,6 +282,40 @@ void main() {
     expect(adapter.calls, 2); // 若键未含 baseUrl，第二次会命中缓存仅 1 次
     expect(r1, {'src': 'a'});
     expect(r2, {'src': 'b'});
+  });
+
+  test('轻量槽位未绑定：summary 调用降级到主力槽位；显式绑定后严格走轻量', () async {
+    // 只绑主力：summary 调用应打到主力的渠道与模型
+    final (dio, adapter) = dioWith([TestResp(200, chatBody('ok'))]);
+    final svc = LlmService(dio: dio, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true),
+        ],
+        slots: {LlmSlot.analysis: SlotBinding(channelId: 1, model: 'pro-model')},
+      ));
+    await svc.chat(const [
+      {'role': 'user', 'content': 'hi'}
+    ], slot: LlmSlot.summary);
+    expect((adapter.requests.single.data as Map)['model'], 'pro-model',
+        reason: '轻量槽位未绑定 → 降级用主力模型，而非静默跳过');
+
+    // 显式绑定轻量：严格走轻量模型，不碰主力
+    final (dio2, adapter2) = dioWith([TestResp(200, chatBody('ok'))]);
+    final svc2 = LlmService(dio: dio2, db: db)
+      ..updateRouting(const RoutingTable(
+        channels: [
+          ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true),
+        ],
+        slots: {
+          LlmSlot.summary: SlotBinding(channelId: 1, model: 'lite-model'),
+          LlmSlot.analysis: SlotBinding(channelId: 1, model: 'pro-model'),
+        },
+      ));
+    await svc2.chat(const [
+      {'role': 'user', 'content': 'hi'}
+    ], slot: LlmSlot.summary);
+    expect((adapter2.requests.single.data as Map)['model'], 'lite-model');
   });
 
   test('fetchModels：GET /models 返回模型 id 列表', () async {

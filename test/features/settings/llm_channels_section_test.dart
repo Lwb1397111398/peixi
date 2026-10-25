@@ -88,10 +88,11 @@ void main() {
     await tester.pumpWidget(wrap(section()));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('轻量整理'), findsOneWidget);
-    expect(find.textContaining('深层分析'), findsOneWidget);
-    expect(find.textContaining('视觉理解'), findsOneWidget);
-    expect(find.textContaining('语义向量'), findsOneWidget);
+    // 锚定括号里的职能说明，避免命中说明文案里的「轻量模型」字样
+    expect(find.textContaining('轻量模型（地图'), findsOneWidget);
+    expect(find.textContaining('主力模型（批注'), findsOneWidget);
+    expect(find.textContaining('视觉模型（关键帧'), findsOneWidget);
+    expect(find.textContaining('向量模型（前文回忆'), findsOneWidget);
     // 渠道名出现两次：模型渠道列表 + analysis 槽位下拉选中项
     expect(find.text('测试站'), findsNWidgets(2));
 
@@ -140,7 +141,7 @@ void main() {
     expect(find.textContaining('连接成功'), findsOneWidget);
     await dismissSnackBar(tester);
 
-    // 深层分析槽位：打开渠道下拉并选择「新站」（此前无绑定时选择无法持久化）
+    // 主力模型槽位：打开渠道下拉并选择「新站」（此前无绑定时选择无法持久化）
     await tester.tap(find.byKey(const Key('slot-channel-analysis')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('新站').last);

@@ -1,4 +1,4 @@
-import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/asr_types.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 
 /// 内嵌字幕 ↔ ASR 语句的交叉纠错（纯函数）。

@@ -1,4 +1,4 @@
-import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/settings/app_prefs.dart';
 
 /// 播放器用的轻量场景视图（含该场景的 L4 问题）。
 class QuizScene {

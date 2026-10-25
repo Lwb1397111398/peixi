@@ -32,19 +32,11 @@ class SubtitleEntry {
       text: j['text'] as String);
 }
 
-/// 音频产出格式（S3）：按容器内可用编码器在运行时决定。
-enum AudioFormat { mp3, m4a, wav }
-
-extension AudioFormatX on AudioFormat {
-  String get ext => name;
-}
-
 abstract class FFmpegService {
   Future<MediaInfo> probe(String path);
   Future<void> extractAudio(String input, String output,
       {void Function(double)? onProgress});
   Future<String?> extractSubtitle(String input, String outputSrt);
-  Future<AudioFormat> pickAudioFormat();
 
   /// 抽取指定时间点的一帧 jpg（M3 实验性视觉辅助）
   Future<void> extractKeyframe(
@@ -78,15 +70,6 @@ class FFmpegKitService implements FFmpegService {
         durationMs: (durationSec * 1000).round(),
         hasSubtitle: hasSubtitle,
         subtitleCodec: subtitleCodec);
-  }
-
-  @override
-  Future<AudioFormat> pickAudioFormat() async {
-    // ffmpeg-kit 变体可能裁掉 libmp3lame；探测后按优先级选（设计稿允许 48-64kbps 压缩音频）。
-    final encoders = await _encoders();
-    if (encoders.contains('libmp3lame')) return AudioFormat.mp3;
-    if (encoders.any((e) => e.startsWith('aac'))) return AudioFormat.m4a;
-    return AudioFormat.wav;
   }
 
   Future<List<String>> _encoders() async {

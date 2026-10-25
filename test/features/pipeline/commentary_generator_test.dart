@@ -12,10 +12,12 @@ import 'package:peixi/core/llm/llm_service.dart';
 import 'package:peixi/features/pipeline/commentary_generator.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 
-/// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
+/// 单渠道路由表：analysis 槽位显式绑定（新路由无默认回落）。
 const _route = ChannelRoute(
-    id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
-const _testRouting = RoutingTable(channels: [_route], slots: {});
+    id: 0, name: 'test', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
+const _testRouting = RoutingTable(channels: [_route], slots: {
+  LlmSlot.analysis: SlotBinding(channelId: 0, model: 'test-model'),
+});
 
 /// 按调用序返回预设 JSON 的假 LLM 适配器。
 class SeqAdapter implements HttpClientAdapter {

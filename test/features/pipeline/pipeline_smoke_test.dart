@@ -13,10 +13,13 @@ import 'package:peixi/features/pipeline/commentary_generator.dart';
 import 'package:peixi/features/pipeline/character_mapper.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 
-/// 单可用渠道路由表：未显式绑定的槽位按默认模型回落（等价旧 updateConfig）。
+/// 单渠道路由表：轻量/主力槽位都显式绑定（新路由无默认回落）。
 const _route = ChannelRoute(
-    id: 0, name: 'legacy', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
-const _testRouting = RoutingTable(channels: [_route], slots: {});
+    id: 0, name: 'test', baseUrl: 'https://x/v1', apiKey: 'k', enabled: true);
+const _testRouting = RoutingTable(channels: [_route], slots: {
+  LlmSlot.summary: SlotBinding(channelId: 0, model: 'test-model'),
+  LlmSlot.analysis: SlotBinding(channelId: 0, model: 'test-model'),
+});
 
 class SeqAdapter implements HttpClientAdapter {
   SeqAdapter(this.bodies);

@@ -2,7 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
-import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/settings/app_prefs.dart';
 
 /// 明文偏好（settings 表）与机密（secure storage）的统一读写入口。
 class SettingsRepository {
@@ -11,18 +11,11 @@ class SettingsRepository {
   final FlutterSecureStorage _secure;
 
   // settings 表键
-  static const _kBaseUrl = 'llm.base_url';
-  static const _kModelCheap = 'llm.model_cheap';
-  static const _kModelStandard = 'llm.model_standard';
-  static const _kModelVision = 'llm.model_vision';
-  // 旧单配置已迁移为渠道的旗标（迁移幂等依据；不依赖"渠道表是否为空"）
-  static const _kChannelsMigrated = 'llm.channels_migrated';
-  static const _kOssBucket = 'oss.bucket';
-  static const _kOssEndpoint = 'oss.endpoint';
-  // secure storage 键
-  static const _sApiKey = 'llm.api_key';
-  static const _sOssAk = 'oss.access_key_id';
-  static const _sOssSk = 'oss.access_key_secret';
+  // LLM 月度 token 预算（0 = 不限）
+  static const _kLlmBudget = 'llm.monthly_budget_tokens';
+  // 并发/频控：并发数默认 2（钳制 1~8），请求最小间隔默认 0ms（钳制 0~10000）
+  static const _kLlmConcurrency = 'llm.concurrency';
+  static const _kLlmMinInterval = 'llm.min_request_interval_ms';
   // 播放偏好键
   static const _kQuizEnabled = 'play.quiz_enabled';
   static const _kMaxPerEpisode = 'play.max_per_episode';
@@ -34,13 +27,6 @@ class SettingsRepository {
   static const _kReaderFontSize = 'reader.font_size';
   static const _kReaderLineHeight = 'reader.line_height';
   static const _kReaderTheme = 'reader.theme';
-  // ASR 模式键
-  static const _kAsrMode = 'asr.mode';
-  // LLM 月度 token 预算（0 = 不限）
-  static const _kLlmBudget = 'llm.monthly_budget_tokens';
-  // 并发/频控：并发数默认 2（钳制 1~8），请求最小间隔默认 0ms（钳制 0~10000）
-  static const _kLlmConcurrency = 'llm.concurrency';
-  static const _kLlmMinInterval = 'llm.min_request_interval_ms';
   // 小说两遍式管线参数（设计文档 §3）：批大小/首屏冲刺/地图领先/语义回忆开关
   static const _kNovelMapBatch = 'novel.mapBatchChapters';
   static const _kNovelDigestBatch = 'novel.digestBatchChapters';
@@ -64,25 +50,6 @@ class SettingsRepository {
   Future<void> _set(String key, String value) async {
     await _db.into(_db.settings).insertOnConflictUpdate(
         SettingsCompanion.insert(key: key, value: value));
-  }
-
-  Future<OssConfig?> loadOssConfig() async {
-    final bucket = await _get(_kOssBucket);
-    final endpoint = await _get(_kOssEndpoint);
-    final ak = await _secure.read(key: _sOssAk);
-    final sk = await _secure.read(key: _sOssSk);
-    if (bucket == null || endpoint == null || ak == null || sk == null) {
-      return null;
-    }
-    return OssConfig(
-        bucket: bucket, endpoint: endpoint, accessKeyId: ak, accessKeySecret: sk);
-  }
-
-  Future<void> saveOssConfig(OssConfig c) async {
-    await _set(_kOssBucket, c.bucket);
-    await _set(_kOssEndpoint, c.endpoint);
-    await _secure.write(key: _sOssAk, value: c.accessKeyId);
-    await _secure.write(key: _sOssSk, value: c.accessKeySecret);
   }
 
   Future<PlayPrefs> loadPlayPrefs() async => PlayPrefs(
@@ -121,15 +88,6 @@ class SettingsRepository {
     await _set(_kReaderLineHeight, p.lineHeight.toString());
     await _set(_kReaderTheme, p.theme.name);
   }
-
-  Future<AsrMode> loadAsrMode() async {
-    final raw = await _get(_kAsrMode);
-    return AsrMode.values
-        .firstWhere((m) => m.name == raw, orElse: () => AsrMode.cloud);
-  }
-
-  Future<void> saveAsrMode(AsrMode mode) async =>
-      _set(_kAsrMode, mode.name);
 
   Future<int> loadLlmBudgetTokens() async =>
       int.tryParse(await _get(_kLlmBudget) ?? '') ?? 0;
@@ -276,10 +234,9 @@ class SettingsRepository {
     return (channelId: cid, model: model);
   }
 
-  /// 组装路由表。首次调用时把旧单配置（llm.base_url/api_key/三模型）迁移为
-  /// "默认渠道 + 三槽位"；从未配置过则返回空表。
+  /// 组装路由表：渠道行 + secure storage KEY + 各槽位绑定。
+  /// 槽位未绑定的键不存在于表中，RoutingTable.resolve 返回 null（无默认回落）。
   Future<RoutingTable> loadRouting() async {
-    await _ensureLegacyMigrated();
     final channels = <ChannelRoute>[];
     for (final row in await loadChannels()) {
       final key = await _secure.read(key: _channelKey(row.id)) ?? '';
@@ -298,55 +255,6 @@ class SettingsRepository {
       }
     }
     return RoutingTable(channels: channels, slots: slots);
-  }
-
-  /// 迁移在途去重：repo 为应用级单例，首启时 providers 启动臂与设置页
-  /// initState / 管线预检可能并发进入 loadRouting，而迁移是"读旗标 →
-  /// 建渠道 → 置旗标"的 check-then-act，各 await 之间存在竞态窗口，
-  /// 双双通过旗标检查会建出重复的"默认渠道"。以实例级共享 Future 去重。
-  Future<void>? _migrationFuture;
-
-  Future<void> _ensureLegacyMigrated() async {
-    final inFlight = _migrationFuture;
-    if (inFlight != null) {
-      await inFlight;
-      return;
-    }
-    final f = _migrateLegacyConfigIfNeeded();
-    _migrationFuture = f;
-    try {
-      await f;
-    } catch (_) {
-      // 失败不缓存：置空以便下次调用重试（成功则永久短路，旗标幂等兜底）。
-      if (identical(_migrationFuture, f)) _migrationFuture = null;
-      rethrow;
-    }
-  }
-
-  Future<void> _migrateLegacyConfigIfNeeded() async {
-    // 幂等守卫用旗标：渠道表为空可能是用户删光了渠道，不能据此重跑迁移
-    if (await _get(_kChannelsMigrated) != null) return;
-    final baseUrl = await _get(_kBaseUrl);
-    final apiKey = await _secure.read(key: _sApiKey);
-    if ((baseUrl == null || baseUrl.isEmpty) &&
-        (apiKey == null || apiKey.isEmpty)) {
-      return;
-    }
-    final id = await addChannel(
-        name: '默认渠道',
-        baseUrl: baseUrl ?? ApiConfig.bailianBaseUrl,
-        apiKey: apiKey ?? '');
-    for (final (slot, key) in [
-      (LlmSlot.summary, _kModelCheap),
-      (LlmSlot.analysis, _kModelStandard),
-      (LlmSlot.vision, _kModelVision),
-    ]) {
-      final model = await _get(key);
-      if (model != null && model.isNotEmpty) {
-        await saveSlot(slot, channelId: id, model: model);
-      }
-    }
-    await _set(_kChannelsMigrated, '1');
   }
 }
 
@@ -371,7 +279,10 @@ class NovelParams {
 /// 窗口边界（桌面端尺寸/位置记忆）。
 class WindowBounds {
   const WindowBounds(
-      {required this.left, required this.top, required this.width, required this.height});
+      {required this.left,
+      required this.top,
+      required this.width,
+      required this.height});
   final double left;
   final double top;
   final double width;

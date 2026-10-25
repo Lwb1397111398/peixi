@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
@@ -20,14 +19,9 @@ class ProcessingPage extends ConsumerWidget {
   const ProcessingPage({super.key, required this.projectId});
   final int projectId;
 
-  /// 本地识别没有上传阶段，时间线里该阶段应显示为"跳过"而非已完成
-  static final _asrModeProvider = FutureProvider.autoDispose<AsrMode>(
-      (ref) => ref.watch(settingsRepoProvider).loadAsrMode());
-
   static const _videoStages = [
     ('subtitle', '字幕提取'),
     ('audio', '音频抽取'),
-    ('upload', '上传 OSS 中转'),
     ('asr', '语音识别'),
     ('map', '角色映射'),
     ('calibration', '人工校准'),
@@ -56,7 +50,6 @@ class ProcessingPage extends ConsumerWidget {
             .getSingle();
     final state = ref
         .watch(pipelineControllerProvider.select((m) => m[projectId]));
-    final localAsr = ref.watch(_asrModeProvider).value == AsrMode.local;
 
     return Scaffold(
       appBar: AppBar(title: const Text('处理进度')),
@@ -162,7 +155,6 @@ class ProcessingPage extends ConsumerWidget {
                             status,
                             state,
                             failedStage,
-                            localAsr: localAsr,
                             isLast: i == _videoStages.length - 1,
                           ),
                       ],
@@ -241,15 +233,11 @@ class ProcessingPage extends ConsumerWidget {
       ProjectStatus status,
       PipelineState? state,
       String? failedStage,
-      {required bool localAsr,
-      required bool isLast}) {
+      {required bool isLast}) {
     final semantic = context.semanticColors;
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
-    // 本地识别模式下上传阶段不执行：显示为中性"跳过"节点，连线跟随后续阶段
-    final skipped = key == 'upload' && localAsr;
-    final reached =
-        !skipped && _stageReached(key, status, failedStage);
+    final reached = _stageReached(key, status, failedStage);
     final active = state?.busy == true && state?.stage == key;
     final failed = failedStage == key && status == ProjectStatus.failed;
     final waitingGate =
@@ -265,23 +253,18 @@ class ProcessingPage extends ConsumerWidget {
                 : reached
                     ? semantic.success
                     : cs.outlineVariant;
-    final passedThrough = skipped && _stageReached('asr', status, failedStage);
-    final lineColor = reached || passedThrough
-        ? semantic.success
-        : cs.outlineVariant;
+    final lineColor = reached ? semantic.success : cs.outlineVariant;
     final labelColor = failed
         ? semantic.error
         : active
             ? cs.onSurface
-            : reached || passedThrough
+            : reached
                 ? cs.onSurface
                 : cs.onSurfaceVariant;
 
     Widget node;
     if (failed) {
       node = Icon(Icons.error_outline, size: 20, color: nodeColor);
-    } else if (skipped) {
-      node = Icon(Icons.remove, size: 19, color: cs.outlineVariant);
     } else if (waitingGate) {
       node = Icon(Icons.pan_tool_alt_outlined, size: 19, color: nodeColor);
     } else if (reached) {
@@ -311,10 +294,8 @@ class ProcessingPage extends ConsumerWidget {
         ? '处理失败，可重试该阶段'
         : waitingGate
             ? '请回到媒体库进入校准'
-            : skipped
-                ? '本地识别模式，无需上传'
-                : active && state?.progress != null
-                    ? '${(state!.progress! * 100).toStringAsFixed(0)}%'
+            : active && state?.progress != null
+                ? '${(state!.progress! * 100).toStringAsFixed(0)}%'
                 : null;
 
     return IntrinsicHeight(
@@ -368,6 +349,7 @@ class ProcessingPage extends ConsumerWidget {
 
   /// 该阶段是否已完成（按状态机位置推断）。
   bool _stageReached(String stage, ProjectStatus status, String? failedStage) {
+    // uploaded 是云端识别时代的残留状态，仅保留排序位兼容旧数据展示
     const order = [
       ProjectStatus.imported,
       ProjectStatus.audioReady,
@@ -382,7 +364,6 @@ class ProcessingPage extends ConsumerWidget {
     ];
     final stageStatus = switch (stage) {
       'subtitle' || 'audio' => ProjectStatus.audioReady,
-      'upload' => ProjectStatus.uploaded,
       'asr' => ProjectStatus.asrDone,
       'map' => ProjectStatus.mapped,
       'calibration' => ProjectStatus.calibrated,

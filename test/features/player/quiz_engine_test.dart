@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/settings/app_prefs.dart';
 import 'package:peixi/features/player/quiz_engine.dart';
 
 QuizScene sc(int id, int start, int end, {bool high = false, bool q = true}) =>

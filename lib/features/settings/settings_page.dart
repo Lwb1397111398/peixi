@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/asr/asr_model_controller.dart';
-import 'package:peixi/core/oss/oss_client.dart';
-import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/settings/app_prefs.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/core/theme/theme_controller.dart';
 import 'package:peixi/features/settings/llm_channels_section.dart';
@@ -16,7 +14,7 @@ import 'package:peixi/ui/widgets/section_card.dart';
 import 'package:peixi/providers.dart';
 
 /// 设置页（设计稿 8.6 的 M1 子集）：外观（主题模式）、模型渠道/功能槽位/
-/// 并发频控、用量与预算、OSS、ASR 模式、播放偏好，按 SectionCard 分组；
+/// 并发频控、用量与预算、ASR 本地模型、播放偏好，按 SectionCard 分组；
 /// 播放偏好开关即时落库。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -26,16 +24,10 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
-  final _ossBucket = TextEditingController();
-  final _ossEndpoint = TextEditingController();
-  final _ossAk = TextEditingController();
-  final _ossSk = TextEditingController();
   final _budget = TextEditingController();
   int _totalTokens = 0;
   int _monthTokens = 0;
-  bool _testingOss = false;
   bool _loaded = false;
-  AsrMode _asrMode = AsrMode.cloud;
   PlayPrefs _playPrefs = const PlayPrefs();
   final _listScroll = ScrollController();
 
@@ -46,14 +38,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Future<void> _init() async {
-    final repo = ref.read(settingsRepoProvider);
-    final oss = await repo.loadOssConfig();
-    if (oss != null) {
-      _ossBucket.text = oss.bucket;
-      _ossEndpoint.text = oss.endpoint;
-      _ossAk.text = oss.accessKeyId;
-      _ossSk.text = oss.accessKeySecret;
-    }
     _totalTokens =
         (await ref
                 .read(databaseProvider)
@@ -63,10 +47,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 .getSingle())
             .read<int>('t');
     _monthTokens = await ref.read(llmServiceProvider).monthUsedTokens();
-    final budget = await repo.loadLlmBudgetTokens();
+    final budget = await ref.read(settingsRepoProvider).loadLlmBudgetTokens();
     if (budget > 0) _budget.text = '$budget';
-    _asrMode = await repo.loadAsrMode();
-    _playPrefs = await repo.loadPlayPrefs();
+    _playPrefs = await ref.read(settingsRepoProvider).loadPlayPrefs();
     if (mounted) setState(() => _loaded = true);
   }
 
@@ -210,15 +193,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   @override
   void dispose() {
     _listScroll.dispose();
-    for (final c in [
-      _ossBucket,
-      _ossEndpoint,
-      _ossAk,
-      _ossSk,
-      _budget,
-    ]) {
-      c.dispose();
-    }
+    _budget.dispose();
     super.dispose();
   }
 
@@ -308,103 +283,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       ),
                       const SizedBox(height: Space.l),
                       SectionCard(
-                        leading: Icons.cloud_upload_outlined,
-                        title: '阿里云 OSS（语音识别中转）',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            TextFormField(
-                              controller: _ossBucket,
-                              decoration:
-                                  const InputDecoration(labelText: 'Bucket'),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _ossEndpoint,
-                              decoration: const InputDecoration(
-                                labelText: 'Endpoint',
-                                hintText: 'oss-cn-beijing.aliyuncs.com',
-                              ),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _ossAk,
-                              obscureText: true,
-                              decoration: const InputDecoration(
-                                  labelText: 'AccessKeyId'),
-                            ),
-                            const SizedBox(height: Space.m),
-                            TextFormField(
-                              controller: _ossSk,
-                              obscureText: true,
-                              decoration: const InputDecoration(
-                                  labelText: 'AccessKeySecret'),
-                            ),
-                            const SizedBox(height: Space.l),
-                            FilledButton.tonalIcon(
-                              onPressed:
-                                  _testingOss ? null : _testOss,
-                              icon: _testingOss
-                                  ? const SizedBox(
-                                      width: 15,
-                                      height: 15,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2))
-                                  : const Icon(Icons.cloud_done_outlined,
-                                      size: 17),
-                              label: Text(
-                                  _testingOss ? '测试中…' : '测试 OSS 连接'),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: Space.l),
-                      SectionCard(
                         leading: Icons.graphic_eq_outlined,
-                        title: '语音识别（ASR）',
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            DropdownButtonFormField<AsrMode>(
-                              initialValue: _asrMode,
-                              isExpanded: true, // 窄屏：长文案省略不溢出
-                              decoration:
-                                  const InputDecoration(labelText: '识别模式'),
-                              items: const [
-                                DropdownMenuItem(
-                                    value: AsrMode.cloud,
-                                    child: Text(
-                                        '云端 · DashScope（需 OSS 中转，有说话人分离）')),
-                                DropdownMenuItem(
-                                    value: AsrMode.local,
-                                    child: Text(
-                                        '本地 · sherpa-onnx（离线，无说话人分离）')),
-                              ],
-                              onChanged: (v) async {
-                                if (v == null) return;
-                                setState(() => _asrMode = v);
-                                await ref
-                                    .read(settingsRepoProvider)
-                                    .saveAsrMode(v);
-                                // 选中本地模式而模型未就绪 → 自动开始下载
-                                //（幂等：下载中不会重复启动）
-                                if (v == AsrMode.local) {
-                                  final st =
-                                      ref.read(asrModelStateProvider);
-                                  if (st.phase != AsrModelPhase.ready &&
-                                      st.phase !=
-                                          AsrModelPhase.downloading) {
-                                    unawaited(ref
-                                        .read(asrModelStateProvider.notifier)
-                                        .download());
-                                  }
-                                }
-                              },
-                            ),
-                            const SizedBox(height: Space.m),
-                            _buildLocalModelStatus(context),
-                          ],
-                        ),
+                        title: '语音识别（本地离线）',
+                        subtitle: 'sherpa-onnx 离线转写，无需联网与 API KEY',
+                        child: _buildLocalModelStatus(context),
                       ),
                       const SizedBox(height: Space.l),
                       SectionCard(
@@ -486,32 +368,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  /// OSS 连通性测试：PUT 一个小测试对象再删除（用表单当前值，未保存也能测）。
-  Future<void> _testOss() async {
-    setState(() => _testingOss = true);
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final oss = OssClient(ref.read(dioProvider),
-          OssConfig(
-            bucket: _ossBucket.text.trim(),
-            endpoint: _ossEndpoint.text.trim(),
-            accessKeyId: _ossAk.text.trim(),
-            accessKeySecret: _ossSk.text.trim(),
-          ));
-      const key = 'peixi/test/connection-test.txt';
-      await oss.putBytes(
-          utf8.encode('peixi 连接测试 ${DateTime.now().toIso8601String()}'),
-          key,
-          contentType: 'text/plain');
-      await oss.deleteObject(key);
-      messenger.showSnackBar(const SnackBar(content: Text('✅ OSS 连接正常')));
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('❌ $e')));
-    } finally {
-      if (mounted) setState(() => _testingOss = false);
-    }
-  }
-
   /// 清空 llm_logs + llm_cache（token 统计归零；缓存删除后重复请求会重新计费）。
   Future<void> _clearLlmStats() async {
     final confirmed = await showDialog<bool>(
@@ -544,16 +400,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Future<void> _save() async {
-    final repo = ref.read(settingsRepoProvider);
-    await repo.saveOssConfig(
-      OssConfig(
-        bucket: _ossBucket.text.trim(),
-        endpoint: _ossEndpoint.text.trim(),
-        accessKeyId: _ossAk.text.trim(),
-        accessKeySecret: _ossSk.text.trim(),
-      ),
-    );
-    await repo.saveLlmBudgetTokens(int.tryParse(_budget.text.trim()) ?? 0);
+    await ref
+        .read(settingsRepoProvider)
+        .saveLlmBudgetTokens(int.tryParse(_budget.text.trim()) ?? 0);
     if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已保存')));

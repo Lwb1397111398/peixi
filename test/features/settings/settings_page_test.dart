@@ -33,19 +33,16 @@ void main() {
         child: MaterialApp(home: child),
       );
 
-  testWidgets('设置页装配：LLM 渠道区块就位，旧 base_url 首启迁移为默认渠道', (tester) async {
-    await db.into(db.settings).insert(SettingsCompanion.insert(
-        key: 'llm.base_url', value: 'https://x/v1'));
+  testWidgets('设置页装配：LLM 渠道区块就位，无渠道时不显示迁移出的默认渠道', (tester) async {
     await tester.pumpWidget(wrap(const SettingsPage()));
     await tester.pumpAndSettle();
 
-    // 新三区块替代旧「LLM API」表单
+    // 三区块就位（渠道为空，无任何默认渠道/预设供应商）
     expect(find.text('模型渠道'), findsOneWidget);
     expect(find.text('功能槽位'), findsOneWidget);
     expect(find.text('并发与频控'), findsOneWidget);
+    expect(find.text('默认渠道'), findsNothing);
     expect(find.text('供应商预设'), findsNothing);
-    // 旧单配置键在首启时迁移为默认渠道
-    expect(find.text('默认渠道'), findsOneWidget);
     // 用量与预算区块保留（页面变长后该块在懒加载 ListView 视口外，先滚动到位）
     await tester.scrollUntilVisible(
       find.text('月度 token 预算'),
@@ -56,9 +53,23 @@ void main() {
     expect(find.text('月度 token 预算'), findsOneWidget);
   });
 
+  testWidgets('设置页装配：语音识别区块只保留本地模式，OSS 区块已移除', (tester) async {
+    await tester.pumpWidget(wrap(const SettingsPage()));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('OSS'), findsNothing);
+    expect(find.textContaining('识别模式'), findsNothing);
+    // ASR 区块在懒加载 ListView 视口外，滚动到位
+    await tester.scrollUntilVisible(
+      find.text('语音识别（本地离线）'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('语音识别（本地离线）'), findsOneWidget);
+  });
+
   testWidgets('播放偏好：开关与滑杆调整即时落库', (tester) async {
-    await db.into(db.settings).insert(SettingsCompanion.insert(
-        key: 'llm.base_url', value: 'https://x/v1'));
     await tester.pumpWidget(wrap(const SettingsPage()));
     await tester.pumpAndSettle();
 

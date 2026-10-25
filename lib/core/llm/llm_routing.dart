@@ -1,9 +1,9 @@
 /// 功能槽位：管线各环节使用哪条渠道的哪个模型。
-/// summary=轻量整理（地图/摘要/知识卡）analysis=深层分析（批注/解说）
-/// vision=视觉理解 embedding=语义向量（仅语义回忆模块）
+/// summary=轻量模型（地图/摘要/知识卡）analysis=主力模型（批注/解说）
+/// vision=视觉模型 embedding=向量模型（仅语义回忆模块）
 enum LlmSlot { summary, analysis, vision, embedding }
 
-/// 单条渠道的路由信息（api_key 由调用方从 secure storage 读出注入）。
+/// 单条自定义渠道的路由信息（api_key 由调用方从 secure storage 读出注入）。
 class ChannelRoute {
   const ChannelRoute({
     required this.id,
@@ -29,19 +29,14 @@ class SlotBinding {
 }
 
 /// 渠道 + 槽位整体路由表；LlmService 解析请求的唯一依据。
+///
+/// 没有内置默认渠道与默认模型：每个槽位必须显式绑定到某条自定义渠道的
+/// 某个模型（轻量/主力/视觉/向量各配各的），未绑定则 resolve 返回 null，
+/// 调用方报「未配置」错误，绝不静默把请求打到任意渠道上。
 class RoutingTable {
   const RoutingTable({required this.channels, required this.slots});
   final List<ChannelRoute> channels;
   final Map<LlmSlot, SlotBinding> slots;
-
-  static const _fallbackModel = {
-    LlmSlot.summary: 'qwen-flash',
-    LlmSlot.analysis: 'qwen-plus',
-    LlmSlot.vision: 'qwen-vl-plus',
-  };
-
-  /// 槽位未绑定时的默认模型名。
-  static String fallbackModelFor(LlmSlot slot) => _fallbackModel[slot]!;
 
   ChannelRoute? _byId(int id) {
     for (final c in channels) {
@@ -50,24 +45,13 @@ class RoutingTable {
     return null;
   }
 
-  ChannelRoute? _firstUsable() {
-    for (final c in channels) {
-      if (c.usable) return c;
-    }
-    return null;
-  }
-
-  /// 解析槽位 → (渠道, 模型)。显式绑定优先；未绑定时 summary/analysis/vision
-  /// 回落到首个可用渠道 + 默认模型；embedding 必须显式绑定（不回落）。
+  /// 解析槽位 → (渠道, 模型)。仅当存在显式绑定且绑定渠道可用时命中；
+  /// 否则返回 null（embedding 之外不再回落默认模型）。
   ({ChannelRoute channel, String model})? resolve(LlmSlot slot) {
     final bind = slots[slot];
-    if (bind != null) {
-      final c = _byId(bind.channelId);
-      if (c != null && c.usable) return (channel: c, model: bind.model);
-    }
-    if (slot == LlmSlot.embedding) return null;
-    final c = _firstUsable();
-    if (c == null) return null;
-    return (channel: c, model: _fallbackModel[slot]!);
+    if (bind == null) return null;
+    final c = _byId(bind.channelId);
+    if (c == null || !c.usable) return null;
+    return (channel: c, model: bind.model);
   }
 }

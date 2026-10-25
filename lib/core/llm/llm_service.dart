@@ -42,17 +42,34 @@ class LlmService {
   final Duration backoffBase;
   RoutingTable? _routing;
 
+  /// 槽位中文名（报错提示用，与设置页「功能槽位」文案一致）。
+  static const _slotLabels = {
+    LlmSlot.summary: '轻量模型',
+    LlmSlot.analysis: '主力模型',
+    LlmSlot.vision: '视觉模型',
+    LlmSlot.embedding: '向量模型',
+  };
+
   /// 管线代码入口：启动与设置变更时注入最新路由表。
   void updateRouting(RoutingTable routing) => _routing = routing;
 
   /// 当前槽位解析出的模型名（评论落库 model 字段用；未配置返回 null）。
   String? modelOf(LlmSlot slot) => _routing?.resolve(slot)?.model;
 
+  /// 槽位解析（含轻量→主力降级）：轻量调用（地图/摘要/角色映射/摘要更新）
+  /// 都依附于主力功能运行，用户没绑轻量槽位时用主力槽位顶上，避免功能
+  /// 静默退化；显式绑定了轻量槽位则严格按绑定走。其余槽位不降级。
+  ({ChannelRoute channel, String model})? _resolveFor(LlmSlot slot) {
+    final r = _routing?.resolve(slot);
+    if (r != null || slot != LlmSlot.summary) return r;
+    return _routing?.resolve(LlmSlot.analysis);
+  }
+
   /// 并发/频控闸门：所有 LLM 调用共用，防止压垮限速中转站。
   final LlmGate gate = LlmGate();
 
   /// 通用系统前缀。同时含中英文 json/JSON 字样：
-  /// 百炼 json_object 模式要求 messages 中必须出现 "json"（spec 3.2）。
+  /// 部分厂商 json_object 模式要求 messages 中必须出现 "json"。
   static const jsonSystemPrefix =
       '只输出 json（JSON），不要 markdown 代码块，不要解释。'
       '不确定的信息明确说不确定，严禁编造剧情和设定。';
@@ -104,9 +121,10 @@ class LlmService {
     String purpose = '',
     int? projectId,
   }) async {
-    final r = _routing?.resolve(slot);
+    final r = _resolveFor(slot);
     if (r == null) {
-      throw LlmException('未配置 LLM 渠道或槽位（设置页 → 模型渠道）');
+      throw LlmException(
+          '尚未绑定「${_slotLabels[slot]}」槽位（设置页 → 功能槽位）');
     }
     final model = r.model;
     final baseUrl = r.channel.baseUrl;
@@ -249,9 +267,10 @@ class LlmService {
     String purpose = '',
     int? projectId,
   }) async {
-    final r = _routing?.resolve(slot);
+    final r = _resolveFor(slot);
     if (r == null) {
-      throw LlmException('未配置 LLM 渠道或槽位（设置页 → 模型渠道）');
+      throw LlmException(
+          '尚未绑定「${_slotLabels[slot]}」槽位（设置页 → 功能槽位）');
     }
     final model = r.model;
     final msgs = [
@@ -313,7 +332,7 @@ class LlmService {
       {String purpose = 'embed', int? projectId}) async {
     final r = _routing?.resolve(LlmSlot.embedding);
     if (r == null) {
-      throw LlmException('未配置 embedding 模型（设置页 → 功能槽位）');
+      throw LlmException('尚未绑定「向量模型」槽位（设置页 → 功能槽位）');
     }
     await _checkBudget();
     await gate.acquire();

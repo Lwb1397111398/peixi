@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peixi/core/database/app_database.dart';
-import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/settings/app_prefs.dart';
 import 'package:peixi/core/theme/tokens.dart';
 import 'package:peixi/features/reader/reader.dart';
 import 'package:peixi/ui/widgets/app_badge.dart';

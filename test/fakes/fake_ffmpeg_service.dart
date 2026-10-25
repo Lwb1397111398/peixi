@@ -40,9 +40,6 @@ class FakeFFmpegService implements FFmpegService {
     return f.readAsStringSync();
   }
 
-  @override
-  Future<AudioFormat> pickAudioFormat() async => AudioFormat.mp3;
-
   int keyframeCalls = 0;
   final keyframeTimes = <int>[];
 

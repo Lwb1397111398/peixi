@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/asr_types.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
 import 'package:peixi/features/pipeline/subtitle_aligner.dart';
 

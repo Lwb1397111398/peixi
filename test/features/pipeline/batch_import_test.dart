@@ -6,7 +6,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:peixi/core/database/app_database.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/pipeline_queue.dart';
 import 'package:peixi/providers.dart';
@@ -96,15 +95,11 @@ void main() {
     });
 
     Future<void> seedLlmConfig() async {
-      // 渠道化后 _precheck 校验"存在可用渠道"；直接落一条渠道
+      // _precheck 校验"存在可用渠道"；直接落一条渠道
       await container.read(settingsRepoProvider).addChannel(
           name: '测试渠道',
           baseUrl: 'https://llm.example/v1',
           apiKey: 'sk-test');
-      // 本地识别模式：绕开云端所需的 OSS 配置校验
-      await container
-          .read(settingsRepoProvider)
-          .saveAsrMode(AsrMode.local);
     }
 
     test('未配置 LLM Key 时直接返回配置错误，不创建项目', () async {

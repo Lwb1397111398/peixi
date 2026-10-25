@@ -1,4 +1,6 @@
 /// projects.status 的枚举封装（设计稿第三节：状态一律 TEXT 存大写字面量）。
+/// uploaded 是云端识别时代的残留值：云端模式（DashScope+OSS 中转）已移除，
+/// 该状态仅为兼容旧库数据保留，新管线不会再写入。
 enum ProjectStatus {
   imported('IMPORTED'),
   audioReady('AUDIO_READY'),
@@ -20,9 +22,10 @@ enum ProjectStatus {
 }
 
 /// 各阶段的入口状态：FAILED 重试时回退到此状态重跑该阶段。
+/// （upload 阶段已随云端识别移除；旧 failed_stage='upload' 的存量项目
+/// 落到兜底 imported，音频缓存仍在会跳过重抽。）
 ProjectStatus entryStatusOfStage(String stage) => switch (stage) {
       'subtitle' || 'audio' => ProjectStatus.imported,
-      'upload' => ProjectStatus.audioReady,
       'asr' => ProjectStatus.uploaded,
       'map' => ProjectStatus.asrDone,
       'segment' => ProjectStatus.calibrated,
@@ -35,7 +38,6 @@ ProjectStatus entryStatusOfStage(String stage) => switch (stage) {
 String stageLabel(String stage) => switch (stage) {
       'subtitle' => '字幕提取',
       'audio' => '音频抽取',
-      'upload' => '上传中转',
       'asr' => '语音识别',
       'map' => '角色映射',
       'segment' => '场景切分',

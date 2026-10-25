@@ -12,9 +12,9 @@
 | 阅读器 | 小说阅读、正文批注与解说展示 | 总览待补 |
 | 卡片集 | 知识卡片浏览与管理 | 总览待补 |
 | 复盘 / SRS | 复盘统计与间隔复习会话 | 总览待补 |
-| LLM 渠道与槽位 | 渠道（KEY+URL+模型）、功能槽位绑定、并发频控、用量预算 | 总览待补 |
-| ASR | 本地 sherpa-onnx 模型与云端转写两种模式 | 总览待补 |
-| OSS 备份 | 项目包上传/恢复（阿里云 OSS 凭据在设置页） | 总览待补 |
+| LLM 渠道与槽位 | 自定义渠道（KEY+URL+拉模型）+ 功能槽位绑定（轻量/主力/视觉/向量），无默认模型；并发频控、用量预算、响应缓存 | [LLM渠道与槽位模块总览.md](LLM渠道与槽位模块总览.md) |
+| ASR | 仅本地 sherpa-onnx 离线转写（云端 DashScope+OSS 中转已移除） | [ASR模块总览.md](ASR模块总览.md) |
+| 项目包 | 项目导出/导入（本地 zip，不含视频本体） | 总览待补 |
 | 设置存储 | settings 表明文偏好 + secure storage 机密的统一读写（SettingsRepository） | 总览待补 |
 | 数据库 | drift（SQLite）表结构与迁移（AppDatabase） | 总览待补 |
 | 主题 | 书房基调 token（Space/AppRadius/SemanticColors）与浅深双主题 | 总览待补 |

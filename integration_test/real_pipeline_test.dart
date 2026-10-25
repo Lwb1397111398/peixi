@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-import 'package:peixi/core/asr/asr_client.dart';
 import 'package:peixi/core/asr/local_asr_client.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/llm/llm_routing.dart';
@@ -122,13 +121,15 @@ void main() {
       channels: [
         ChannelRoute(
             id: 0,
-            name: 'legacy',
-            // 百炼 OpenAI 兼容端点（原 ApiConfig.bailianBaseUrl）
+            name: 'dashscope',
+            // DashScope OpenAI 兼容端点（作为一条普通自定义渠道接入）
             baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             apiKey: 'sk-invalid-e2e-key',
             enabled: true),
       ],
-      slots: {},
+      slots: {
+        LlmSlot.summary: SlotBinding(channelId: 0, model: 'qwen-turbo'),
+      },
     ));
     Object? caught;
     try {
@@ -144,17 +145,5 @@ void main() {
     print('=== 云端 LLM 真实错误响应: $caught');
     expect((caught as LlmException).toString(), isNot(isEmpty));
     await db.close();
-
-    // ASR 提交端点：无效 key → AsrException
-    final asr = AsrClient(Dio());
-    Object? asrErr;
-    try {
-      await asr.submit('sk-invalid-e2e-key', 'https://peixi.invalid/a.mp3');
-    } catch (e) {
-      asrErr = e;
-    }
-    expect(asrErr, isA<AsrException>());
-    // ignore: avoid_print
-    print('=== 云端 ASR 真实错误响应: $asrErr');
   }, timeout: const Timeout(Duration(minutes: 3)));
 }

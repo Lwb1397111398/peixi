@@ -1,53 +1,18 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/asr_types.dart';
 import 'package:peixi/core/database/app_database.dart';
 import 'package:peixi/core/media/ffmpeg_service.dart';
-import 'package:peixi/core/settings/api_config.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/features/pipeline/pipeline_engine.dart';
 import 'package:peixi/features/pipeline/project_meta.dart';
 import 'package:peixi/features/pipeline/project_status.dart';
 
 import '../../fakes/fake_ffmpeg_service.dart';
-
-/// 可变脚本适配器：队列可被测试中途改写（模拟"修复后重试"）。
-class ScriptAdapter implements HttpClientAdapter {
-  final List<Object> script; // (int,String) 或异常对象
-  final requests = <RequestOptions>[];
-  int calls = 0;
-  ScriptAdapter(this.script);
-
-  @override
-  Future<ResponseBody> fetch(RequestOptions options,
-      Stream<Uint8List>? requestStream, Future? cancelFuture) async {
-    requests.add(options);
-    if (calls >= script.length) {
-      throw DioException(requestOptions: options, error: '脚本耗尽');
-    }
-    final r = script[calls++];
-    if (r is (int, String)) {
-      return ResponseBody.fromString(r.$2, r.$1, headers: {
-        'content-type': ['application/json']
-      });
-    }
-    throw r as DioException;
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
-
-const asrResultJson =
-    '{"transcripts":[{"sentences":['
-    '{"begin_time":72000,"end_time":75800,"text":"站长，这件事恐怕没那么简单","speaker_id":0},'
-    '{"begin_time":76000,"end_ms":77500,"end_time":77500,"text":"你先别急","speaker_id":1}]}]}';
 
 void main() {
   late AppDatabase db;
@@ -59,15 +24,6 @@ void main() {
     db = AppDatabase(NativeDatabase.memory());
     FlutterSecureStorage.setMockInitialValues({});
     settings = SettingsRepository(db, const FlutterSecureStorage());
-    await settings.addChannel(
-        name: '测试渠道',
-        baseUrl: 'https://llm.example/v1',
-        apiKey: 'sk-test');
-    await settings.saveOssConfig(const OssConfig(
-        bucket: 'b',
-        endpoint: 'oss-cn-beijing.aliyuncs.com',
-        accessKeyId: 'ak',
-        accessKeySecret: 'sk'));
     audioDir = Directory.systemTemp.createTempSync('peixi_audio');
     videoDir = Directory.systemTemp.createTempSync('peixi_video');
   });
@@ -90,38 +46,39 @@ void main() {
         metaJson: Value(meta.encode())));
   }
 
-  (PipelineEngine, ScriptAdapter, ScriptAdapter) makeEngine(
-      List<Object> ossScript, List<Object> asrScript,
-      {FakeFFmpegService? ffmpeg}) {
-    final ossAdapter = ScriptAdapter(ossScript);
-    final asrAdapter = ScriptAdapter(asrScript);
-    final engine = PipelineEngine(
-        db: db,
-        ffmpeg: ffmpeg ?? FakeFFmpegService(durationMs: 2700000),
-        asr: AsrClient(Dio()..httpClientAdapter = asrAdapter),
-        settings: settings,
-        audioDir: audioDir,
-        ossDio: Dio()..httpClientAdapter = ossAdapter,
-        pollInterval: const Duration(milliseconds: 10));
-    return (engine, ossAdapter, asrAdapter);
+  PipelineEngine makeEngine({
+    FakeFFmpegService? ffmpeg,
+    required Future<NormalizedAsr> Function(String audioPath) localAsr,
+  }) {
+    return PipelineEngine(
+      db: db,
+      ffmpeg: ffmpeg ?? FakeFFmpegService(durationMs: 2700000),
+      settings: settings,
+      audioDir: audioDir,
+      localAsr: localAsr,
+    );
   }
 
   Future<Project> reload(int id) => (db.select(db.projects)
         ..where((t) => t.id.equals(id)))
       .getSingle();
 
-  test('全链路 S1→READY：校准闸门前停、确认后完成、segments 落库、OSS 用后即删',
-      () async {
+  test('全链路（本地识别）S1→READY：校准闸门前停、确认后完成、segments 落库', () async {
     final id = await createProject();
-    final (engine, ossAdapter, asrAdapter) = makeEngine([
-      (200, ''), // PUT 音频
-      (200, ''), // DELETE 对象
-    ], [
-      (200, '{"output":{"task_id":"t-1","task_status":"PENDING"}}'), // 提交
-      (200,
-          '{"output":{"task_id":"t-1","task_status":"SUCCEEDED","transcription_url":"https://res/1.json"}}'), // 轮询
-      (200, asrResultJson), // 下载结果
-    ]);
+    final engine = makeEngine(localAsr: (audioPath) async {
+      return const NormalizedAsr(durationMs: 1500, sentences: [
+        AsrSentence(
+            beginMs: 0,
+            endMs: 700,
+            text: '站长，这件事恐怕没那么简单',
+            speakerId: 'SPEAKER_00'),
+        AsrSentence(
+            beginMs: 700,
+            endMs: 1500,
+            text: '你先别急',
+            speakerId: 'SPEAKER_00'),
+      ]);
+    });
 
     final stages = <String>[];
     engine.events.listen((e) => stages.add(e.stage));
@@ -134,202 +91,65 @@ void main() {
     expect(segs.length, 2);
     expect(segs.first.content, '站长，这件事恐怕没那么简单');
     final meta = ProjectMeta.fromJson(p.metaJson);
-    expect(meta.asrTaskId, 't-1');
+    expect(meta.audioFormat, 'wav');
     expect(meta.asrNormalized!['sentences'].length, 2);
+    // 时间线不应再出现上传阶段（云端识别已移除）
+    expect(stages, isNot(contains('upload')));
 
     await engine.confirmCalibration(id, {});
     p = await reload(id);
     expect(p.status, ProjectStatus.ready.db);
     expect(File(meta.audioPath(audioDir.path, id)).existsSync(), isTrue,
         reason: '默认保留临时音频');
-
-    // OSS：一次 PUT + 一次 DELETE；ASR：提交/轮询/下载各一次
-    expect(ossAdapter.requests.map((r) => r.method).toList(),
-        containsAll(['PUT', 'DELETE']));
-    expect(
-        asrAdapter.requests
-            .where((r) => r.path.contains('transcription') && r.method == 'POST')
-            .length,
-        1);
   });
 
-  test('云端 ASR 的 KEY 优先取 DashScope 渠道，而非首个可用渠道', () async {
-    // setUp 里已加首个可用渠道（中转站 llm.example）；再补一条 DashScope 渠道
-    await settings.addChannel(
-        name: '百炼',
-        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        apiKey: 'sk-dash');
+  test('本地识别拿到的是 16k wav 路径，且缓存直接复用不重抽', () async {
     final id = await createProject();
-    final (engine, _, asrAdapter) = makeEngine([
-      (200, ''), // PUT 音频
-      (200, ''), // DELETE 对象
-    ], [
-      (200, '{"output":{"task_id":"t-1","task_status":"PENDING"}}'), // 提交
-      (200,
-          '{"output":{"task_id":"t-1","task_status":"SUCCEEDED","transcription_url":"https://res/1.json"}}'), // 轮询
-      (200, asrResultJson), // 下载结果
-    ]);
-
-    await engine.run(id);
-
-    final submit = asrAdapter.requests
-        .where((r) => r.path.contains('transcription') && r.method == 'POST')
-        .single;
-    expect(submit.headers['Authorization'], 'Bearer sk-dash',
-        reason: 'ASR 是百炼服务，必须用 DashScope 渠道的 KEY 鉴权');
-  });
-
-  test('上传失败 → FAILED+failed_stage，修复后 retry 走完全程', () async {
-    final id = await createProject();
-    final (engine, ossAdapter, asrAdapter) = makeEngine([
-      DioException(requestOptions: RequestOptions(path: '/')), // PUT 网络错
-    ], [
-      (200, '{"output":{"task_id":"t-2","task_status":"PENDING"}}'),
-      (200,
-          '{"output":{"task_id":"t-2","task_status":"SUCCEEDED","transcription_url":"https://res/2.json"}}'),
-      (200, asrResultJson),
-    ]);
-
-    await engine.run(id);
-    var p = await reload(id);
-    expect(p.status, ProjectStatus.failed.db);
-    expect(p.failedStage, 'upload');
-
-    // 修复网络：补上 PUT/DELETE
-    ossAdapter.script
-      ..clear()
-      ..addAll([(200, ''), (200, '')]);
-    await engine.retry(id);
-    p = await reload(id);
-    expect(p.status, ProjectStatus.waitCalibration.db);
-  });
-
-  test('ASR 断点续跑：提交后中断，新引擎凭 task_id 续轮询且不重复提交', () async {
-    final id = await createProject();
-    // 第一次运行：PUT 成功、提交成功、轮询一次 RUNNING 后网络断
-    final (engine1, oss1, asr1) = makeEngine([
-      (200, ''),
-    ], [
-      (200, '{"output":{"task_id":"t-9","task_status":"PENDING"}}'),
-      (200, '{"output":{"task_id":"t-9","task_status":"RUNNING"}}'),
-      DioException(requestOptions: RequestOptions(path: '/')), // 轮询断网
-    ]);
-    await engine1.run(id);
-    var p = await reload(id);
-    expect(p.status, ProjectStatus.failed.db);
-    expect(p.failedStage, 'asr');
-    expect(ProjectMeta.fromJson(p.metaJson).asrTaskId, 't-9',
-        reason: 'task_id 必须已落盘');
-
-    // "重启"：新引擎新适配器，直接续轮询
-    final (engine2, oss2, asr2) = makeEngine([
-      (200, ''), // ASR 完成后的 DELETE
-    ], [
-      (200,
-          '{"output":{"task_id":"t-9","task_status":"SUCCEEDED","transcription_url":"https://res/9.json"}}'),
-      (200, asrResultJson),
-    ]);
-    await engine2.retry(id);
-    p = await reload(id);
-    expect(p.status, ProjectStatus.waitCalibration.db);
-    // 断言两次运行合计只提交了一次任务
-    final submits = asr1.requests
-            .where((r) => r.path.contains('asr/transcription'))
-            .length +
-        asr2.requests.where((r) => r.path.contains('asr/transcription')).length;
-    expect(submits, 1);
-  });
-
-  test('未配置 OSS 时在 upload 阶段失败并给出可读信息', () async {
-    // 清空 OSS 配置
-    await settings.saveOssConfig(const OssConfig(
-        bucket: '', endpoint: '', accessKeyId: '', accessKeySecret: ''));
-    final id = await createProject();
-    final (engine, _, _) = makeEngine([], []);
-    await engine.run(id);
-    final p = await reload(id);
-    expect(p.status, ProjectStatus.failed.db);
-    expect(p.failedStage, 'upload');
-
-    final events = <PipelineEvent>[];
-    final sub = engine.events.listen(events.add);
-    await engine.retry(id);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    await sub.cancel();
-    expect(events.last.detail, contains('OSS'));
-  });
-
-  test('本地 ASR 模式：跳过 OSS 直接识别，segments/normalized 落库', () async {
-    await settings.saveAsrMode(AsrMode.local);
-    final id = await createProject();
-    final localPaths = <String>[];
-    final engine = PipelineEngine(
-        db: db,
-        ffmpeg: FakeFFmpegService(durationMs: 2700000),
-        asr: AsrClient(Dio()),
-        settings: settings,
-        audioDir: audioDir,
-        pollInterval: const Duration(milliseconds: 10),
+    final received = <String>[];
+    final ffmpeg = FakeFFmpegService(durationMs: 2700000);
+    final engine = makeEngine(
+        ffmpeg: ffmpeg,
         localAsr: (audioPath) async {
-          localPaths.add(audioPath);
-          return const NormalizedAsr(durationMs: 1500, sentences: [
-            AsrSentence(
-                beginMs: 0,
-                endMs: 1500,
-                text: '本地识别文本',
-                speakerId: 'SPEAKER_00'),
-          ]);
+          received.add(audioPath);
+          return const NormalizedAsr(durationMs: 100, sentences: []);
         });
-    final stages = <String>[];
-    engine.events.listen((e) => stages.add(e.stage));
-    await engine.run(id);
 
-    // 无 OSS 配置也能走到闸门 = upload 阶段被跳过
+    await engine.run(id);
+    expect(received, hasLength(1));
+    expect(received.single.endsWith('.wav'), isTrue);
+    expect(ffmpeg.extractCalls, 1, reason: '仅音频抽取阶段抽一次');
+
+    // 重跑（重试路径）：音频缓存存在，不再重抽
     final p = await reload(id);
-    expect(p.status, ProjectStatus.waitCalibration.db);
-    expect(stages, isNot(contains('upload')));
-    // 本地识别拿到的是 wav 路径
-    expect(localPaths, hasLength(1));
-    expect(localPaths.single.endsWith('.wav'), isTrue);
-    // meta 强制 wav、无 asr_task_id（不走云端任务）
-    final meta = ProjectMeta.fromJson(p.metaJson);
-    expect(meta.audioFormat, 'wav');
-    expect(meta.asrTaskId, isNull);
-    expect(meta.asrNormalized!['sentences'], hasLength(1));
-    final segs = await db.select(db.segments).get();
-    expect(segs.single.content, '本地识别文本');
-    expect(segs.single.speakerCharId, isNull); // 映射阶段尚未执行
+    await (db.update(db.projects)..where((t) => t.id.equals(id))).write(
+        ProjectsCompanion(
+            status: Value(ProjectStatus.imported.db),
+            metaJson: Value(ProjectMeta.fromJson(p.metaJson).encode())));
+    await engine.run(id);
+    expect(ffmpeg.extractCalls, 1, reason: 'wav 缓存存在时跳过重抽');
   });
 
-  test('本地 ASR 失败后重试可恢复（UPLOADED 入口不再空转）', () async {
-    await settings.saveAsrMode(AsrMode.local);
+  test('本地 ASR 失败后重试可恢复（asr→map 走到校准闸门）', () async {
     final id = await createProject();
     var calls = 0;
-    PipelineEngine makeEngine() => PipelineEngine(
-        db: db,
-        ffmpeg: FakeFFmpegService(durationMs: 2700000),
-        asr: AsrClient(Dio()),
-        settings: settings,
-        audioDir: audioDir,
-        pollInterval: const Duration(milliseconds: 10),
-        localAsr: (audioPath) async {
-          calls++;
-          if (calls == 1) throw PipelineException('本地模型未加载');
-          return const NormalizedAsr(durationMs: 1500, sentences: [
-            AsrSentence(
-                beginMs: 0,
-                endMs: 1500,
-                text: '重试成功文本',
-                speakerId: 'SPEAKER_00'),
-          ]);
-        });
+    final engine = makeEngine(localAsr: (audioPath) async {
+      calls++;
+      if (calls == 1) throw PipelineException('本地模型未加载');
+      return const NormalizedAsr(durationMs: 1500, sentences: [
+        AsrSentence(
+            beginMs: 0,
+            endMs: 1500,
+            text: '重试成功文本',
+            speakerId: 'SPEAKER_00'),
+      ]);
+    });
 
-    await makeEngine().run(id);
+    await engine.run(id);
     var p = await reload(id);
     expect(p.status, ProjectStatus.failed.db);
     expect(p.failedStage, 'asr');
 
-    await makeEngine().retry(id);
+    await engine.retry(id);
     p = await reload(id);
     expect(p.status, ProjectStatus.waitCalibration.db,
         reason: '重试应走完 asr→map 到校准闸门，而不是停留在 FAILED');
@@ -338,9 +158,8 @@ void main() {
     expect(segs.single.content, '重试成功文本');
   });
 
-  test('云端 UPLOADED 但从未上传成功：重试先补上传再识别', () async {
+  test('云端时代残留 UPLOADED 项目：本地管线接手，mp3 缓存补转 wav 识别', () async {
     final id = await createProject();
-    // 人为构造"已到 UPLOADED 但 meta 无 ossKey"的状态（如切换识别模式后的失败残留）
     final meta = ProjectMeta.fromJson((await reload(id)).metaJson)
       ..audioFormat = 'mp3';
     await (db.update(db.projects)..where((t) => t.id.equals(id))).write(
@@ -349,67 +168,51 @@ void main() {
             metaJson: Value(meta.encode())));
     File('${audioDir.path}/$id.mp3').writeAsBytesSync(List.filled(64, 0));
 
-    final (engine, ossAdapter, asrAdapter) = makeEngine([
-      (200, ''), // PUT 音频（补上传）
-      (200, ''), // DELETE 对象
-    ], [
-      (200, '{"output":{"task_id":"t-9","task_status":"PENDING"}}'),
-      (200,
-          '{"output":{"task_id":"t-9","task_status":"SUCCEEDED","transcription_url":"https://res/9.json"}}'),
-      (200, asrResultJson),
-    ]);
-    await engine.retry(id);
+    final received = <String>[];
+    final engine = makeEngine(localAsr: (audioPath) async {
+      received.add(audioPath);
+      return const NormalizedAsr(durationMs: 100, sentences: []);
+    });
+    await engine.run(id);
 
     final p = await reload(id);
     expect(p.status, ProjectStatus.waitCalibration.db);
-    expect(
-        ossAdapter.requests.where((r) => r.method == 'PUT'),
-        hasLength(1),
-        reason: '缺 ossKey 时必须补上传，否则 asr 阶段报缺对象键死循环');
-    final saved = ProjectMeta.fromJson(p.metaJson);
-    expect(saved.ossKey, isNotNull);
-    expect(asrAdapter.requests, isNotEmpty);
+    expect(received.single.endsWith('.wav'), isTrue,
+        reason: 'mp3 缓存不能直接喂本地识别，必须补转 wav');
   });
 
-  test('取消：ASR 轮询中请求取消不置 FAILED，继续处理可完成', () async {
+  test('本地识别中请求取消：不置 FAILED，进度保留可继续', () async {
     final id = await createProject();
-    final pending =
-        '{"output":{"task_id":"t-1","task_status":"PENDING"}}';
-    final (engine, ossAdapter, asrAdapter) = makeEngine([
-      (200, ''), // PUT 音频
-      (200, ''), // DELETE 对象（取消后不应执行）
-    ], [
-      (200, pending), // 提交
-      for (var i = 0; i < 60; i++) (200, pending), // 轮询（留足时间窗口）
-    ]);
+    late PipelineEngine engine;
+    engine = makeEngine(localAsr: (audioPath) async {
+      // 模拟长任务：等取消标记命中后协作式退出
+      while (!engine.isCancelled(id)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      throw const PipelineCancelled();
+    });
 
     final events = <PipelineEvent>[];
     final sub = engine.events.listen(events.add);
     final runFuture = engine.run(id);
     await Future<void>.delayed(const Duration(milliseconds: 100));
-    engine.requestCancel(id); // 轮询循环内命中标记
+    engine.requestCancel(id);
     await runFuture;
     await Future<void>.delayed(const Duration(milliseconds: 20));
     await sub.cancel();
 
-    var p = await reload(id);
-    expect(p.status, ProjectStatus.uploaded.db, reason: '取消保持当前落盘状态');
+    final p = await reload(id);
+    expect(p.status, ProjectStatus.audioReady.db, reason: '取消保持当前落盘状态');
     expect(p.failedStage, isNull);
     expect(events.any((e) => e.cancelled), isTrue);
-    final deletes = ossAdapter.requests.where((r) => r.method == 'DELETE');
-    expect(deletes, isEmpty, reason: '取消时不应走到删除 OSS 对象');
 
-    // 继续处理：凭 asr_task_id 续轮询至完成
-    asrAdapter.script.addAll([
-      (200,
-          '{"output":{"task_id":"t-1","task_status":"SUCCEEDED","transcription_url":"https://res/2.json"}}'),
-      (200, asrResultJson),
-    ]);
-    await engine.run(id);
-    p = await reload(id);
-    expect(p.status, ProjectStatus.waitCalibration.db);
-    expect(ossAdapter.requests.where((r) => r.method == 'PUT'), hasLength(1),
-        reason: '续跑不重复上传');
+    // 继续处理：识别完成走完全程
+    final engine2 = makeEngine(localAsr: (audioPath) async {
+      return const NormalizedAsr(durationMs: 100, sentences: []);
+    });
+    await engine2.run(id);
+    final p2 = await reload(id);
+    expect(p2.status, ProjectStatus.waitCalibration.db);
   });
 
   test('内嵌字幕交叉纠错：高重叠句换字幕文本，低重叠句保留 ASR', () async {
@@ -433,15 +236,20 @@ void main() {
         status: ProjectStatus.imported.db,
         metaJson: Value(meta.encode())));
 
-    final (engine, _, _) = makeEngine([
-      (200, ''), // PUT
-      (200, ''), // DELETE
-    ], [
-      (200, '{"output":{"task_id":"t-9","task_status":"PENDING"}}'),
-      (200,
-          '{"output":{"task_id":"t-9","task_status":"SUCCEEDED","transcription_url":"https://res/9.json"}}'),
-      (200, asrResultJson),
-    ]);
+    final engine = makeEngine(localAsr: (audioPath) async {
+      return const NormalizedAsr(durationMs: 300000, sentences: [
+        AsrSentence(
+            beginMs: 72000,
+            endMs: 75800,
+            text: '站长，这件事恐怕没那么简单',
+            speakerId: 'SPEAKER_00'),
+        AsrSentence(
+            beginMs: 76000,
+            endMs: 77500,
+            text: '你先别急',
+            speakerId: 'SPEAKER_00'),
+      ]);
+    });
     await engine.run(id);
 
     final p = await reload(id);
@@ -457,5 +265,33 @@ void main() {
     final norm = ProjectMeta.fromJson(p.metaJson).asrNormalized!;
     expect((norm['sentences'] as List).first['text'],
         '站长，这件事恐怕没那么简单啊');
+  });
+
+  test('源视频丢失且缓存不是 wav：asr 阶段报可读错误', () async {
+    final id = await createProject();
+    final p0 = await reload(id);
+    // 云端时代残留：mp3 缓存 + 源视频已被清理
+    File(p0.sourcePath).deleteSync();
+    final meta = ProjectMeta.fromJson(p0.metaJson)..audioFormat = 'mp3';
+    await (db.update(db.projects)..where((t) => t.id.equals(id))).write(
+        ProjectsCompanion(
+            status: Value(ProjectStatus.audioReady.db),
+            metaJson: Value(meta.encode())));
+
+    final engine = makeEngine(localAsr: (audioPath) async {
+      throw StateError('不应被调用');
+    });
+    final events = <PipelineEvent>[];
+    final sub = engine.events.listen(events.add);
+    await engine.run(id);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await sub.cancel();
+
+    final p = await reload(id);
+    expect(p.status, ProjectStatus.failed.db);
+    expect(p.failedStage, 'asr');
+    expect(
+        events.where((e) => e.status == ProjectStatus.failed).single.detail,
+        contains('WAV'));
   });
 }

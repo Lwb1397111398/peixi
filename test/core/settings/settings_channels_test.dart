@@ -15,25 +15,6 @@ void main() {
   });
   tearDown(() async => db.close());
 
-  /// 直写旧单配置原始键（_migrateLegacyConfigIfNeeded 的读取对象），
-  /// 模拟渠道化之前的老用户存量数据。
-  Future<void> seedLegacyConfig({
-    String baseUrl = 'https://old/v1',
-    String apiKey = 'sk-old',
-    String cheap = 'flash-x',
-    String standard = 'plus-x',
-    String vision = 'vl-x',
-  }) async {
-    Future<void> put(String key, String value) => db
-        .into(db.settings)
-        .insert(SettingsCompanion.insert(key: key, value: value));
-    if (baseUrl.isNotEmpty) await put('llm.base_url', baseUrl);
-    await put('llm.model_cheap', cheap);
-    await put('llm.model_standard', standard);
-    await put('llm.model_vision', vision);
-    await const FlutterSecureStorage().write(key: 'llm.api_key', value: apiKey);
-  }
-
   test('渠道增改删 + KEY 落 secure storage', () async {
     final id = await repo.addChannel(
         name: 'A站', baseUrl: 'https://a/v1', apiKey: 'sk-a');
@@ -48,6 +29,16 @@ void main() {
     expect(await repo.loadChannels(), isEmpty);
   });
 
+  test('多条自定义渠道按 id 升序返回，KEY 各自对应', () async {
+    final a = await repo.addChannel(
+        name: 'A', baseUrl: 'https://a/v1', apiKey: 'sk-a');
+    final b = await repo.addChannel(
+        name: 'B', baseUrl: 'https://b/v1', apiKey: 'sk-b');
+    final routing = await repo.loadRouting();
+    expect(routing.channels.map((c) => c.id), [a, b]);
+    expect(routing.channels.map((c) => c.apiKey), ['sk-a', 'sk-b']);
+  });
+
   test('槽位绑定保存/读取；删除渠道时清掉指向它的槽位', () async {
     final id = await repo.addChannel(
         name: 'A', baseUrl: 'https://a/v1', apiKey: 'k');
@@ -57,58 +48,6 @@ void main() {
     await repo.deleteChannel(id);
     r = await repo.loadRouting();
     expect(r.slots.containsKey(LlmSlot.analysis), false);
-  });
-
-  test('旧单配置首启迁移为默认渠道+三槽位，且不重复迁移', () async {
-    await seedLegacyConfig();
-    var r = await repo.loadRouting();
-    expect(r.channels.single.baseUrl, 'https://old/v1');
-    expect(r.channels.single.apiKey, 'sk-old');
-    expect(r.slots[LlmSlot.summary]!.model, 'flash-x');
-    expect(r.slots[LlmSlot.analysis]!.model, 'plus-x');
-    expect(r.slots[LlmSlot.vision]!.model, 'vl-x');
-    // 第二次不再重复建渠道
-    r = await repo.loadRouting();
-    expect(r.channels.length, 1);
-    // 删光渠道后不得"复活"默认渠道（迁移幂等由旗标保证，而非"表是否为空"）
-    await repo.deleteChannel(r.channels.single.id);
-    r = await repo.loadRouting();
-    expect(r.channels, isEmpty);
-    expect(r.slots, isEmpty);
-  });
-
-  test('并发 loadRouting：迁移共享同一 Future，首启不重复建默认渠道', () async {
-    await seedLegacyConfig();
-    // 模拟首启竞态：providers 启动臂与设置页 initState 同时 loadRouting
-    await Future.wait([repo.loadRouting(), repo.loadRouting()]);
-    expect((await repo.loadChannels()).length, 1);
-    final r = await repo.loadRouting();
-    expect(r.channels.single.baseUrl, 'https://old/v1');
-  });
-
-  test('迁移后经渠道 API 编辑：同步落库，重启不回退', () async {
-    await seedLegacyConfig();
-    await repo.loadRouting(); // 触发一次性迁移（此后旗标已置位）
-    // 设置页编辑渠道与三槽位（updateChannel/saveSlot 路径）
-    final id = (await repo.loadChannels()).single.id;
-    await repo.updateChannel(id,
-        name: '默认渠道',
-        baseUrl: 'https://new/v1',
-        apiKey: 'sk-new',
-        enabled: true);
-    await repo.saveSlot(LlmSlot.summary, channelId: id, model: 'flash-n');
-    await repo.saveSlot(LlmSlot.analysis, channelId: id, model: 'plus-n');
-    await repo.saveSlot(LlmSlot.vision, channelId: id, model: 'vl-n');
-    // 模拟重启：repo 无内存状态，再次 loadRouting 等价重启后装配
-    final r = await repo.loadRouting();
-    expect(r.channels.single.baseUrl, 'https://new/v1');
-    // apiKey 走 secure storage 路径（loadRouting 从 _channelKey 读出）
-    expect(r.channels.single.apiKey, 'sk-new');
-    expect(r.slots[LlmSlot.summary]!.model, 'flash-n');
-    expect(r.slots[LlmSlot.analysis]!.model, 'plus-n');
-    expect(r.slots[LlmSlot.vision]!.model, 'vl-n');
-    // 槽位仍绑定到那条渠道，而不是悬空回落
-    expect(r.slots[LlmSlot.analysis]!.channelId, r.channels.single.id);
   });
 
   test('损坏的槽位串被丢弃：loadRouting 不抛异常也不含该槽位', () async {

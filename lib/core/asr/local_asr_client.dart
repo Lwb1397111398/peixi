@@ -4,12 +4,11 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
-import 'package:peixi/core/asr/asr_client.dart';
+import 'package:peixi/core/asr/asr_types.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 /// 本地 ASR（sherpa-onnx paraformer-zh-2024-03-09 int8，离线推理）。
-///
-/// 与云端 AsrClient 的产物同构（NormalizedAsr）。
+/// 语音识别仅有此本地模式（云端 DashScope+OSS 中转已移除）。
 /// 已知限制（交付说明 M2 已注明）：
 /// - 本地 paraformer 无说话人分离 → 所有句子 speaker 归一为 SPEAKER_00；
 /// - 无 VAD，按 30s 窗切块、窗口边界吸附到低能量点，边界仍可能截词；
@@ -151,7 +150,7 @@ class LocalAsrClient {
   }
 }
 
-/// 纯逻辑：离线识别的 token+时间戳 → 句子列表（DashScope 同构）。
+/// 纯逻辑：离线识别的 token+时间戳 → 句子列表（规范结构同 asr_types）。
 /// 切句依据（优先级）：标点结尾 > 静音间隙(gapSec) > 句长上限(maxTokens)。
 /// 时间戳为每 token 的绝对秒；本地模型无说话人分离，全部归 SPEAKER_00。
 List<AsrSentence> buildSentencesFromTokens(

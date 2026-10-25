@@ -38,7 +38,9 @@ RoutingTable routing() => const RoutingTable(
       channels: [
         ChannelRoute(id: 1, name: 'A', baseUrl: 'https://a/v1', apiKey: 'k', enabled: true)
       ],
-      slots: {},
+      slots: {
+        LlmSlot.analysis: SlotBinding(channelId: 1, model: 'test-model'),
+      },
     );
 
 void main() {

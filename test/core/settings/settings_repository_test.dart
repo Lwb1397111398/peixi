@@ -2,7 +2,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peixi/core/database/app_database.dart';
-import 'package:peixi/core/settings/api_config.dart';
+import 'package:peixi/core/settings/app_prefs.dart';
 import 'package:peixi/core/settings/settings_repository.dart';
 
 void main() {
@@ -17,27 +17,16 @@ void main() {
   });
   tearDown(() async => db.close());
 
-  test('OssConfig 与播放偏好持久化', () async {
-    await repo.saveOssConfig(const OssConfig(
-        bucket: 'b',
-        endpoint: 'oss-cn-beijing.aliyuncs.com',
-        accessKeyId: 'ak',
-        accessKeySecret: 'sk'));
-    final oss = await repo.loadOssConfig();
-    expect(oss?.bucket, 'b');
+  test('播放偏好持久化', () async {
     final prefs = await repo.loadPlayPrefs();
     expect(prefs.quizEnabled, isTrue); // 设计稿 8.2 默认开启
     expect(prefs.maxPerEpisode, 5);
     expect(prefs.minGapMinutes, 4);
     expect(prefs.triggerRatio, 0.3);
-  });
-
-  test('ASR 模式默认 cloud，可切 local 再切回', () async {
-    expect(await repo.loadAsrMode(), AsrMode.cloud);
-    await repo.saveAsrMode(AsrMode.local);
-    expect(await repo.loadAsrMode(), AsrMode.local);
-    await repo.saveAsrMode(AsrMode.cloud);
-    expect(await repo.loadAsrMode(), AsrMode.cloud);
+    await repo.savePlayPrefs(prefs.copyWith(maxPerEpisode: 8, quizEnabled: false));
+    final saved = await repo.loadPlayPrefs();
+    expect(saved.quizEnabled, isFalse);
+    expect(saved.maxPerEpisode, 8);
   });
 
   test('阅读偏好持久化往返', () async {

@@ -58,3 +58,6 @@ models/
 
 # Android 根级构建产物（子模块构建目录已重定向到 /build/）
 android/build/
+
+# CodeGraph 本地索引
+.codegraph/

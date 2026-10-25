@@ -8,7 +8,7 @@ import 'package:peixi/core/settings/settings_repository.dart';
 import 'package:peixi/core/update/update_service.dart';
 import 'package:peixi/features/pipeline/pipeline_controller.dart';
 
-/// 共享 Dio（ASR 等客户端复用）
+/// 共享 Dio（ASR 模型下载等客户端复用）
 final dioProvider = Provider<Dio>((ref) => Dio());
 
 /// ffmpeg 门面（导入探测/抽音频/抽字幕）；测试用 Fake 覆写

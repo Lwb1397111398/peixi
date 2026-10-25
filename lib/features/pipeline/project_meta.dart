@@ -19,8 +19,6 @@ class ProjectMeta {
     this.hasSubtitle = false,
     this.audioFormat,
     this.subtitle,
-    this.ossKey,
-    this.asrTaskId,
     this.asrNormalized,
     this.digest,
     this.mediaMissing = false,
@@ -31,10 +29,8 @@ class ProjectMeta {
   int? episode;
   int durationMs;
   bool hasSubtitle;
-  String? audioFormat; // mp3|m4a|wav
+  String? audioFormat; // 固定 wav（本地识别）；云端时代旧项目可能是 mp3/m4a
   List<SubtitleEntry>? subtitle; // S2 产物，null = 无流或提取失败
-  String? ossKey; // S4 产物
-  String? asrTaskId; // S5 断点续跑凭据（app 被杀后凭它续轮询）
   Map<String, dynamic>? asrNormalized; // {"duration_ms":..,"sentences":[..]}
   String? digest; // S9 前情滚动摘要（跨 run 保持）
 
@@ -61,8 +57,6 @@ class ProjectMeta {
         if (audioFormat != null) 'audioFormat': audioFormat,
         if (subtitle != null)
           'subtitle': [for (final s in subtitle!) s.toJson()],
-        if (ossKey != null) 'ossKey': ossKey,
-        if (asrTaskId != null) 'asrTaskId': asrTaskId,
         if (asrNormalized != null) 'asrNormalized': asrNormalized,
         if (digest != null) 'digest': digest,
         if (mediaMissing) 'mediaMissing': true,
@@ -92,8 +86,6 @@ class ProjectMeta {
       subtitle: (j['subtitle'] as List?)
           ?.map((e) => SubtitleEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      ossKey: j['ossKey'] as String?,
-      asrTaskId: j['asrTaskId'] as String?,
       asrNormalized: j['asrNormalized'] == null
           ? null
           : Map<String, dynamic>.from(j['asrNormalized'] as Map),
